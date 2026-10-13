@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>Θέση ΦΠΑ</title>
-  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+  <title>ΦΠΑ live</title>
+  <meta name="theme-color" content="#f4f5f4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121314" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ΦΠΑ">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -17,47 +17,89 @@
   <script type="module" src="script.js"></script>
 </head>
 <body>
-  <main>
-    <section id="login" hidden>
-      <h1>Θέση ΦΠΑ</h1>
+  <section id="login" hidden>
+    <div class="login-box">
+      <div class="brand"><span class="logo">%</span><span>ΦΠΑ <em>live</em></span></div>
       <form id="login-form">
         <label>Email <input type="email" name="email" autocomplete="username" required></label>
         <label>Κωδικός <input type="password" name="password" autocomplete="current-password" required></label>
-        <button type="submit">Σύνδεση</button>
+        <button type="submit" class="primary">Σύνδεση</button>
         <p class="error" id="login-error" hidden></p>
       </form>
-    </section>
+    </div>
+  </section>
 
-    <section id="app" hidden>
-      <header>
-        <select id="quarter" aria-label="Τρίμηνο"></select>
-        <button id="logout" class="link" type="button">Έξοδος</button>
-      </header>
+  <section id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="logo">%</span><span>ΦΠΑ <em>live</em></span></div>
+      <div class="top-actions">
+        <span class="chip" id="updated-chip" title="Τελευταία ενημέρωση από myDATA">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span id="updated-text">—</span>
+        </span>
+        <button class="icon-btn" id="refresh" type="button" title="Ανανέωση από myDATA" aria-label="Ανανέωση">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/></svg>
+        </button>
+        <button class="icon-btn" id="logout" type="button" title="Αποσύνδεση" aria-label="Αποσύνδεση">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>
+        </button>
+      </div>
+    </header>
 
-      <div class="card" id="result">
-        <span class="badge">Εκτίμηση</span>
-        <div class="kind" id="kind">—</div>
-        <div class="amount" id="amount">—</div>
+    <main>
+      <div class="grid-top">
+        <article class="card live" id="live">
+          <div class="live-head">
+            <h1 id="live-title">ΦΠΑ <em>live</em></h1>
+            <span class="badge">Εκτίμηση</span>
+          </div>
+          <p class="sub" id="live-sub">—</p>
+          <p class="kind-line" id="kind-line">—</p>
+          <p class="big" id="amount">—</p>
+          <div class="live-foot">
+            <span>Πιστωτικό προηγ. περιόδου: <strong id="credit">—</strong></span>
+            <button id="edit-credit" class="link" type="button" aria-label="Αλλαγή πιστωτικού">✎ αλλαγή</button>
+            <button id="back-current" class="link" type="button" hidden>← Τρέχον τρίμηνο</button>
+          </div>
+        </article>
+
+        <div class="stack">
+          <article class="card figure">
+            <p class="fig-amount" id="out-vat">—</p>
+            <p class="fig-net" id="out-net">—</p>
+            <p class="fig-label">Έσοδα</p>
+          </article>
+          <article class="card figure">
+            <p class="fig-amount" id="in-vat">—</p>
+            <p class="fig-net" id="in-net">—</p>
+            <p class="fig-note" id="unclassified" hidden></p>
+            <p class="fig-label">Έξοδα</p>
+          </article>
+        </div>
+
+        <article class="card status">
+          <h2>Συγχρονισμός</h2>
+          <p class="meta" id="last-update">—</p>
+          <p class="meta" id="docs-count"></p>
+          <p class="warn" id="warning" hidden></p>
+          <p class="error" id="sync-error" hidden></p>
+          <button class="primary" id="refresh-big" type="button">Ανανέωση από myDATA</button>
+          <p class="fine">Το ποσό είναι εκτίμηση από τα παραστατικά του myDATA. Τα μη χαρακτηρισμένα έξοδα
+            υπολογίζονται ως εκπιπτόμενα μέχρι να χαρακτηριστούν.</p>
+        </article>
       </div>
 
-      <dl class="lines">
-        <div><dt>Φόρος εκροών</dt><dd id="out-vat">—</dd></div>
-        <div><dt>Φόρος εισροών</dt><dd id="in-vat">—</dd></div>
-        <div>
-          <dt>Πιστωτικό προηγ. περιόδου
-            <button id="edit-credit" class="link" type="button" aria-label="Αλλαγή πιστωτικού">✎</button>
-          </dt>
-          <dd id="credit">—</dd>
-        </div>
-      </dl>
-
-      <p class="meta" id="last-update"></p>
-      <p class="meta" id="unclassified" hidden></p>
-      <p class="meta warn" id="warning" hidden></p>
-      <p class="error" id="sync-error" hidden></p>
-
-      <button id="refresh" type="button">Ανανέωση</button>
-    </section>
-  </main>
+      <div class="grid-bottom">
+        <section>
+          <h2 class="section-title">Κατάσταση ΦΠΑ</h2>
+          <div class="months" id="months"></div>
+        </section>
+        <section>
+          <h2 class="section-title" id="history-title">Ιστορικό</h2>
+          <div class="history" id="history"></div>
+        </section>
+      </div>
+    </main>
+  </section>
 </body>
 </html>

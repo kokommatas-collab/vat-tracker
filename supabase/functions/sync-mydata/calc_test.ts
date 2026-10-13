@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { currentQuarter, formatEur, quarterLabel, quarterOf, vatPosition } from "../../../docs/calc.js";
+import {
+  aggregate, currentQuarter, formatEur, monthLabel, quarterLabel, quarterMonths, quarterOf, quarterRange, vatPosition,
+} from "../../../docs/calc.js";
 import { previousQuarterStart, syncWindow, toMyDataDate } from "./dates.ts";
 
 Deno.test("quarter boundaries", () => {
@@ -19,7 +21,9 @@ Deno.test("sync window: previous quarter start → today, incl. year rollover", 
   assert.equal(previousQuarterStart("2026-10-13"), "2026-07-01");
   assert.equal(previousQuarterStart("2026-04-01"), "2026-01-01");
   assert.equal(previousQuarterStart("2026-02-15"), "2025-10-01");
-  assert.deepEqual(syncWindow(new Date("2026-12-31T22:30:00Z")), { from: "2026-10-01", to: "2027-01-01" });
+  assert.deepEqual(syncWindow(new Date("2026-12-31T22:30:00Z")), { from: "2026-01-01", to: "2027-01-01" });
+  assert.deepEqual(syncWindow(new Date("2026-10-14T09:00:00Z")), { from: "2026-01-01", to: "2026-10-14" });
+  assert.deepEqual(syncWindow(new Date("2027-02-10T09:00:00Z")), { from: "2026-01-01", to: "2027-02-10" });
   assert.equal(toMyDataDate("2026-01-05"), "05/01/2026");
 });
 
@@ -48,4 +52,34 @@ Deno.test("credit notes with negative output VAT reduce the total", () => {
 Deno.test("labels and € formatting", () => {
   assert.equal(quarterLabel("2026-Q4"), "4ο τρίμηνο 2026 (Οκτ–Δεκ)");
   assert.match(formatEur(1234.5), /1\.234,50\s€/);
+});
+
+Deno.test("unclassified input VAT is deductible (matches myDATA estimate)", () => {
+  // Real Q4 2026 figures: 1848.00 output, 138.88 unclassified input → 1709.12 debit
+  assert.deepEqual(vatPosition({ outVat: 1848, inVat: 0, unclassifiedVat: 138.88 }), { kind: "debit", amount: 1709.12 });
+  // Real Q3 2026: 3810.57 − 293.33 − 491.02 = 3026.22
+  assert.deepEqual(vatPosition({ outVat: 3810.57, inVat: 293.33, unclassifiedVat: 491.02 }), { kind: "debit", amount: 3026.22 });
+});
+
+Deno.test("aggregate by quarter and month, cancelled excluded, cents-exact", () => {
+  const rows = [
+    { issue_date: "2026-10-02", is_cancelled: false, out_vat: 0.1, in_vat: 0, unclassified_vat: 0, out_net: 0.42, in_net: 0, unclassified_net: 0 },
+    { issue_date: "2026-10-30", is_cancelled: false, out_vat: 0.2, in_vat: 0, unclassified_vat: 1, out_net: 0.83, in_net: 0, unclassified_net: 4.17 },
+    { issue_date: "2026-11-01", is_cancelled: true, out_vat: 100, in_vat: 0, unclassified_vat: 0, out_net: 0, in_net: 0, unclassified_net: 0 },
+    { issue_date: "2026-09-30", is_cancelled: false, out_vat: 24, in_vat: 5, unclassified_vat: 0, out_net: 100, in_net: 20.83, unclassified_net: null },
+  ];
+  const q = aggregate(rows);
+  assert.equal(q.get("2026-Q4").out_vat, 0.3);
+  assert.equal(q.get("2026-Q4").out_net, 1.25);
+  assert.equal(q.get("2026-Q4").docs, 2);
+  assert.equal(q.get("2026-Q3").in_net, 20.83);
+  const m = aggregate(rows, "month");
+  assert.deepEqual([...m.keys()].sort(), ["2026-09", "2026-10"]);
+});
+
+Deno.test("month and quarter labels/ranges", () => {
+  assert.equal(monthLabel("2026-10"), "Οκτώβριος 2026");
+  assert.deepEqual(quarterMonths("2026-Q4"), ["2026-10", "2026-11", "2026-12"]);
+  assert.deepEqual(quarterRange("2026-Q3"), { from: "01/07/2026", to: "30/09/2026" });
+  assert.deepEqual(quarterRange("2024-Q1"), { from: "01/01/2024", to: "31/03/2024" });
 });

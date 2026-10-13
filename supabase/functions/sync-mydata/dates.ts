@@ -21,8 +21,12 @@ export function toMyDataDate(isoDate: string): string {
   return `${d}/${m}/${y}`;
 }
 
-/** Sync window: previous quarter start (late transmissions) through today. */
+/**
+ * Sync window: 1 January of the year the previous quarter belongs to, through
+ * today. Covers late transmissions for the previous quarter and keeps the
+ * whole year's history (all quarters of the year) up to date.
+ */
 export function syncWindow(now: Date = new Date()): { from: string; to: string } {
   const to = athensToday(now);
-  return { from: previousQuarterStart(to), to };
+  return { from: `${previousQuarterStart(to).slice(0, 4)}-01-01`, to };
 }

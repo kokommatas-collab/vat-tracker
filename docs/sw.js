@@ -1,6 +1,6 @@
 // Caches only the static app shell. Supabase/API responses (financial data)
 // are cross-origin and never cached.
-const CACHE = "vat-shell-v1";
+const CACHE = "vat-shell-v2";
 const SHELL = ["./", "index.html", "styles.css", "script.js", "calc.js", "config.js",
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
 

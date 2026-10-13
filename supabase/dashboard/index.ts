@@ -29,10 +29,14 @@ function toMyDataDate(isoDate: string): string {
   return `${d}/${m}/${y}`;
 }
 
-/** Sync window: previous quarter start (late transmissions) through today. */
+/**
+ * Sync window: 1 January of the year the previous quarter belongs to, through
+ * today. Covers late transmissions for the previous quarter and keeps the
+ * whole year's history (all quarters of the year) up to date.
+ */
 function syncWindow(now: Date = new Date()): { from: string; to: string } {
   const to = athensToday(now);
-  return { from: previousQuarterStart(to), to };
+  return { from: `${previousQuarterStart(to).slice(0, 4)}-01-01`, to };
 }
 
 // ---- parse.ts --------------------------------------------------------------
@@ -44,6 +48,9 @@ function syncWindow(now: Date = new Date()): { from: string; to: string } {
 const OUTPUT_FIELDS = ["Vat331", "Vat332", "Vat333", "Vat334", "Vat335", "Vat336"];
 const INPUT_FIELDS = ["Vat381", "Vat382", "Vat383", "Vat384", "Vat385", "Vat386"];
 const UNCLASSIFIED_FIELD = "VatUnclassified381";
+const OUTPUT_NET_FIELDS = ["Vat301", "Vat302", "Vat303", "Vat304", "Vat305", "Vat306"];
+const INPUT_NET_FIELDS = ["Vat361", "Vat362", "Vat363", "Vat364", "Vat365", "Vat366"];
+const UNCLASSIFIED_NET_FIELD = "VatUnclassified361";
 
 interface VatEntry {
   mark: string;
@@ -52,6 +59,9 @@ interface VatEntry {
   out_vat: number;
   in_vat: number;
   unclassified_vat: number;
+  out_net: number; // Σ Vat301..306 (net bases)
+  in_net: number; // Σ Vat361..366
+  unclassified_net: number; // VatUnclassified361
   has_negative: boolean; // any Vat* amount < 0 (credit note sign check)
 }
 
@@ -104,6 +114,9 @@ function parseEntry(xml: string): VatEntry {
     out_vat: sumCents(xml, OUTPUT_FIELDS) / 100,
     in_vat: sumCents(xml, INPUT_FIELDS) / 100,
     unclassified_vat: toCents(text(xml, UNCLASSIFIED_FIELD)) / 100,
+    out_net: sumCents(xml, OUTPUT_NET_FIELDS) / 100,
+    in_net: sumCents(xml, INPUT_NET_FIELDS) / 100,
+    unclassified_net: toCents(text(xml, UNCLASSIFIED_NET_FIELD)) / 100,
     has_negative: hasNegative,
   };
 }

@@ -20,10 +20,12 @@ Deno.test("parses output, input and unclassified VAT", () => {
   assert.equal(next, null);
   assert.deepEqual(entries[0], {
     mark: "400001", issue_date: "2026-10-01", is_cancelled: false,
-    out_vat: 25.3, in_vat: 0, unclassified_vat: 0, has_negative: false,
+    out_vat: 25.3, in_vat: 0, unclassified_vat: 0,
+    out_net: 100, in_net: 0, unclassified_net: 0, has_negative: false,
   });
   assert.equal(entries[1].in_vat, 12);
   assert.equal(entries[1].unclassified_vat, 3.1);
+  assert.equal(entries[1].in_net, 50);
   assert.equal(entries[1].out_vat, 0); // missing optional fields → 0
 });
 

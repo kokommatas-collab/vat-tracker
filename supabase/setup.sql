@@ -19,6 +19,10 @@ create table if not exists public.vat_entries (
   synced_at        timestamptz not null default now()
 );
 create index if not exists vat_entries_issue_date_idx on public.vat_entries (issue_date);
+-- Net bases (added after v1; safe to re-run).
+alter table public.vat_entries add column if not exists out_net          numeric(14,2) not null default 0;  -- Σ Vat301..Vat306
+alter table public.vat_entries add column if not exists in_net           numeric(14,2) not null default 0;  -- Σ Vat361..Vat366
+alter table public.vat_entries add column if not exists unclassified_net numeric(14,2) not null default 0;  -- VatUnclassified361
 
 create table if not exists public.quarter_credit (
   quarter    text primary key check (quarter ~ '^\d{4}-Q[1-4]$'),
@@ -42,12 +46,16 @@ create table if not exists public.sync_log (
 create index if not exists sync_log_started_at_idx on public.sync_log (started_at desc);
 
 -- Per-quarter totals (cancelled documents excluded).
-create or replace view public.quarter_summary with (security_invoker = true) as
+drop view if exists public.quarter_summary;
+create view public.quarter_summary with (security_invoker = true) as
 select
   to_char(issue_date, 'YYYY') || '-Q' || to_char(issue_date, 'Q') as quarter,
   sum(out_vat)          as out_vat,
   sum(in_vat)           as in_vat,
   sum(unclassified_vat) as unclassified_vat,
+  sum(out_net)          as out_net,
+  sum(in_net)           as in_net,
+  sum(unclassified_net) as unclassified_net,
   count(*)              as docs
 from public.vat_entries
 where not is_cancelled
