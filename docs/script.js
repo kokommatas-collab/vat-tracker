@@ -3,7 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import {
   aggregate, currentQuarter, formatEur, monthLabel, quarterLabel, quarterMonths, quarterRange,
   quarterShort, vatPosition,
-} from "./calc.js?v=2";
+} from "./calc.js?v=3";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -23,7 +23,6 @@ let byMonth = new Map();   // "2026-10" → totals
 let credits = new Map();   // quarter → carried-forward credit
 let selected = currentQuarter();
 let lastSyncAt = null;
-const openMonths = new Set();
 
 function show(loggedIn) {
   $("login").hidden = loggedIn;
@@ -99,6 +98,9 @@ function positionOf(q) {
   });
 }
 
+const pct = (x, max) => `${max > 0 ? Math.max(0, Math.min(100, (x / max) * 100)) : 0}%`;
+const kindWord = (kind) => (kind === "debit" ? "Πληρωτέο" : "Πιστωτικό");
+
 function render() {
   const now = currentQuarter();
   const isCurrent = selected === now;
@@ -107,32 +109,49 @@ function render() {
 
   $("updated-text").textContent = ago(lastSyncAt);
 
-  // Live card
-  $("live").className = `card live ${kind}`;
-  $("live-title").replaceChildren(...(isCurrent
-    ? [document.createTextNode("ΦΠΑ "), el("em", "", "live")]
-    : [document.createTextNode(quarterShort(selected))]));
+  // Hero
+  $("live").className = `hero ${kind}`;
   const r = quarterRange(selected);
   $("live-sub").textContent = isCurrent
-    ? `${quarterShort(selected)} · ${ago(lastSyncAt)}`
-    : `${r.from} → ${r.to}`;
-  $("kind-line").textContent = `${isCurrent ? "Τρέχουσα θέση ΦΠΑ" : "Θέση ΦΠΑ"} · ${kind === "debit" ? "Χρεωστικό" : "Πιστωτικό"}`;
+    ? `${quarterShort(selected)}, μέχρι σήμερα`
+    : `${quarterShort(selected)}, ${r.from} έως ${r.to}`;
+  $("kind-line").textContent = kindWord(kind);
   $("amount").textContent = formatEur(amount);
   $("credit").textContent = formatEur(credits.get(selected) ?? 0);
   $("back-current").hidden = isCurrent;
 
-  // Έσοδα / Έξοδα
-  const inVat = Number(t.in_vat || 0) + Number(t.unclassified_vat || 0);
-  const inNet = Number(t.in_net || 0) + Number(t.unclassified_net || 0);
-  $("out-vat").textContent = formatEur(t.out_vat);
-  $("out-net").textContent = `Καθαρά ${formatEur(t.out_net)}`;
-  $("in-vat").textContent = formatEur(inVat);
-  $("in-net").textContent = `Καθαρά ${formatEur(inNet)}`;
+  // Balance bars (shared scale)
+  const out = Number(t.out_vat || 0);
+  const inCls = Number(t.in_vat || 0);
   const unc = Number(t.unclassified_vat || 0);
-  setText("unclassified", `εκ των οποίων ${formatEur(unc)} ΦΠΑ σε μη χαρακτηρισμένα`, unc > 0);
+  const inAll = inCls + unc;
+  const max = Math.max(out, inAll);
+  $("bar-out").style.width = pct(out, max);
+  $("bar-in").style.width = pct(inCls, max);
+  $("bar-unc").style.left = pct(inCls, max);
+  $("bar-unc").style.width = pct(unc, max);
+  const lo = Math.min(out, inAll);
+  $("bar-diff").style.left = pct(lo, max);
+  $("bar-diff").style.width = pct(Math.abs(out - inAll), max);
+  $("out-vat").textContent = formatEur(out);
+  $("in-vat").textContent = formatEur(inAll);
+  $("diff-label").textContent = out >= inAll ? "Διαφορά" : "Υπερβάλλον";
+  $("diff-val").textContent = formatEur(Math.abs(out - inAll));
+
+  const inNet = Number(t.in_net || 0) + Number(t.unclassified_net || 0);
+  $("nets").textContent = `Καθαρά έσοδα ${formatEur(t.out_net)} και καθαρά έξοδα ${formatEur(inNet)}`;
+  setText("unclassified", `Από τον ΦΠΑ εξόδων, ${formatEur(unc)} αφορούν μη χαρακτηρισμένα παραστατικά (γραμμοσκιασμένο).`, unc > 0);
 
   renderMonths();
   renderHistory(now);
+}
+
+function row(kind, title, sub, amt) {
+  const left = el("div");
+  left.append(el("div", "row-title", title), el("div", "row-sub", sub));
+  const right = el("div");
+  right.append(el("div", "row-amt", formatEur(amt)), el("div", "row-kind", kindWord(kind)));
+  return [left, right];
 }
 
 function renderMonths() {
@@ -144,65 +163,39 @@ function renderMonths() {
   }
   box.replaceChildren(...items.map((m) => {
     const t = byMonth.get(m);
+    const inAll = t.in_vat + t.unclassified_vat;
     const { kind, amount } = vatPosition({ outVat: t.out_vat, inVat: t.in_vat, unclassifiedVat: t.unclassified_vat });
-    const card = el("div", `month ${kind}`);
-    const row = el("div", "month-row");
-    const left = el("div");
-    left.append(el("div", "month-name", monthLabel(m)), el("div", "month-kind", kind === "debit" ? "Χρεωστικό" : "Πιστωτικό"));
-    const right = el("div");
-    right.style.textAlign = "right";
-    const btn = el("button", "pill", openMonths.has(m) ? "Κλείσιμο ▴" : "Ανάλυση ▾");
-    btn.type = "button";
-    btn.addEventListener("click", () => {
-      openMonths.has(m) ? openMonths.delete(m) : openMonths.add(m);
-      renderMonths();
-    });
-    right.append(el("div", "month-amt", formatEur(amount)), btn);
-    row.append(left, right);
-    card.append(row);
-    if (openMonths.has(m)) {
-      const dl = el("dl");
-      const line = (k, v) => {
-        const d = el("div");
-        d.append(el("dt", "", k), el("dd", "", v));
-        dl.append(d);
-      };
-      line("ΦΠΑ εσόδων", `${formatEur(t.out_vat)} (καθαρά ${formatEur(t.out_net)})`);
-      line("ΦΠΑ εξόδων", `${formatEur(t.in_vat)} (καθαρά ${formatEur(t.in_net)})`);
-      if (t.unclassified_vat) line("Μη χαρακτηρισμένα", `${formatEur(t.unclassified_vat)} (καθαρά ${formatEur(t.unclassified_net)})`);
-      line("Παραστατικά", String(t.docs));
-      card.append(dl);
-    }
-    return card;
+    const d = el("div", `row ${kind}`);
+    d.append(...row(kind, monthLabel(m),
+      `Έσοδα ${formatEur(t.out_vat)}, έξοδα ${formatEur(inAll)}, ${t.docs} παραστατικά`, amount));
+    return d;
   }));
 }
 
 function renderHistory(now) {
-  const quarters = [...new Set([now, ...byQuarter.keys()])].filter((q) => q !== now).sort().reverse();
-  $("history-title").textContent = quarters.length
-    ? `Ιστορικό ${[...new Set(quarters.map((q) => q.slice(0, 4)))].join("–")}`
-    : "Ιστορικό";
+  const quarters = [...new Set([now, ...byQuarter.keys()])].sort().reverse();
   const box = $("history");
-  if (quarters.length === 0) {
-    box.replaceChildren(el("p", "empty-note", "Δεν υπάρχουν προηγούμενα τρίμηνα ακόμα."));
-    return;
-  }
+  const max = Math.max(1, ...quarters.map((q) => {
+    const t = totalsOf(q);
+    return Math.max(Number(t.out_vat || 0), Number(t.in_vat || 0) + Number(t.unclassified_vat || 0));
+  }));
   box.replaceChildren(...quarters.map((q) => {
+    const t = totalsOf(q);
     const { kind, amount } = positionOf(q);
     const r = quarterRange(q);
-    const b = el("button", `hcard ${kind}`);
+    const b = el("button", `row qrow ${kind}`);
     b.type = "button";
     b.setAttribute("aria-pressed", String(q === selected));
-    b.append(
-      el("h3", "", quarterShort(q)),
-      el("p", "range", `${r.from} → ${r.to}`),
-      el("p", "hk", kind === "debit" ? "Χρεωστικό" : "Πιστωτικό"),
-      el("p", "ha", formatEur(amount)),
-    );
+    b.append(...row(kind, quarterShort(q), q === now ? "Τρέχον τρίμηνο" : `${r.from} έως ${r.to}`, amount));
+    const mini = el("div", "mini");
+    const mo = el("span", "m-out"); mo.style.width = pct(Number(t.out_vat || 0), max);
+    const mi = el("span", "m-in"); mi.style.width = pct(Number(t.in_vat || 0) + Number(t.unclassified_vat || 0), max);
+    mini.append(mo, mi);
+    b.append(mini);
     b.addEventListener("click", () => {
-      selected = q === selected ? now : q;
+      selected = q;
       render();
-      if (selected !== now) window.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     });
     return b;
   }));
