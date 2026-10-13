@@ -9,99 +9,139 @@ result > 0 → Χρεωστικός, otherwise Πιστωτικός
 ```
 
 - `VatUnclassified381` is shown separately ("Μη χαρακτηρισμένα έξοδα") and is **not** included.
-- Cancelled documents (`IsCancelled=true`) are excluded.
-- Only data that has been transmitted to myDATA is counted. Missing supplier documents mean missing input VAT.
+- Cancelled documents are excluded.
+- Only data transmitted to myDATA is counted.
 
-## Layout
+---
 
-| Path | What |
-|---|---|
-| `docs/` | Static site (GitHub Pages): `index.html`, `styles.css`, `script.js`, `calc.js`, `config.js`, PWA files |
-| `supabase/migrations/` | Tables, RLS, `quarter_summary` view, daily pg_cron job |
-| `supabase/functions/sync-mydata/` | Edge Function: RequestVatInfo → XML parse → upsert, plus tests |
+## Εγκατάσταση από iPhone (χωρίς υπολογιστή)
 
-## Security model
+Θα χρειαστείς Safari και τους κωδικούς Taxisnet. Τα βήματα γίνονται με τη σειρά.
 
-- The site is public, but the data is not. Every table has RLS. The `anon` role has no grants. A logged-in user can read, and can write only `quarter_credit`.
-- `vat_entries` and `sync_log` are written only by the Edge Function using the service role.
-- myDATA credentials and the cron secret live **only** in Supabase secrets/Vault. `docs/config.js` contains just the project URL and anon key, which are public by design.
-- Signups are disabled, so you are the only user. You can additionally set `ALLOWED_EMAIL` on the function.
-- The Edge Function is **read-only** toward myDATA: it only calls `RequestVatInfo`.
-- The service worker caches only static files, never API data.
+### ☐ 1. Κλειδί myDATA API (παραγωγή)
+1. Άνοιξε https://www1.aade.gr/saadeapps2/bookkeeper-web και συνδέσου με Taxisnet.
+2. Πάτα **«Φόρμα εγγραφής στο myDATA REST API»** → **«Νέα εγγραφή χρήστη»**.
+3. Δώσε ένα **όνομα χρήστη**, μόνο λατινικά γράμματα και αριθμούς (π.χ. `vattracker`). Πάτα «Προσθήκη».
+4. Σημείωσε στις Σημειώσεις:
+   - το **όνομα χρήστη**
+   - τον **«Κωδικό API»** (μακρύ κείμενο)
 
-## Setup
+### ☐ 2. Project στο Supabase
+1. Άνοιξε https://supabase.com/dashboard → **New project**.
+2. Επίλεξε **Region: Central EU (Frankfurt)**.
+3. Βάλε ένα δυνατό Database password και κράτησέ το. Πάτα **Create**.
+4. Όταν ετοιμαστεί, πήγαινε **Project Settings → General**. Σημείωσε το **Project ID** (20 πεζά γράμματα, π.χ. `abcdefghijklmnopqrst`).
 
-### 1. myDATA API credentials (production)
-1. Go to https://www1.aade.gr/saadeapps2/bookkeeper-web and log in with Taxisnet.
-2. Open «Φόρμα εγγραφής στο myDATA REST API» → «Νέα εγγραφή χρήστη».
-3. Pick a username (Latin letters and digits only).
-4. Copy the «Κωδικός API». That is the subscription key.
+### ☐ 3. Κλείσιμο εγγραφών
+**Authentication → Sign In / Providers**. Απενεργοποίησε το **«Allow new users to sign up»** και πάτα Save.
 
-To test against the dev environment instead, register at https://mydata-dev-register.azurewebsites.net and set `MYDATA_BASE_URL=https://mydataapidev.aade.gr` (step 4). Dev only contains documents you submitted there yourself.
+### ☐ 4. Δημιουργία του χρήστη σου
+1. **Authentication → Users → Add user → Create new user**.
+2. Βάλε email και κωδικό. Τσέκαρε το **Auto Confirm User**.
+3. Πάτα **Create user**. Με αυτά θα συνδέεσαι στην εφαρμογή.
 
-### 2. Supabase project
-1. Create a project at https://supabase.com.
-2. Under **Authentication → Sign In / Providers**, keep Email enabled and **turn off "Allow new users to sign up"**.
-3. Under **Authentication → Users → Add user**, create your user with email and password. Tick "Auto confirm".
+### ☐ 5. Secrets της Edge Function
+1. Πήγαινε **Edge Functions → Secrets**.
+2. Πρόσθεσε τα παρακάτω, ένα-ένα (Name / Value):
 
-### 3. Database
-```bash
-npm i -g supabase            # or: brew install supabase/tap/supabase
-supabase login
-supabase link --project-ref <PROJECT_REF>
-supabase db push             # applies supabase/migrations/*
-```
+   | Name | Value |
+   |---|---|
+   | `MYDATA_USER_ID` | το όνομα χρήστη από το βήμα 1 |
+   | `MYDATA_SUBSCRIPTION_KEY` | ο «Κωδικός API» από το βήμα 1 |
+   | `ALLOWED_EMAIL` | το email του βήματος 4 |
+   | `ALLOWED_ORIGIN` | `https://kokommatas-collab.github.io` |
 
-### 4. Edge Function secrets and deploy
-```bash
-CRON_SECRET=$(openssl rand -hex 32)
-supabase secrets set \
-  MYDATA_USER_ID='<myDATA username>' \
-  MYDATA_SUBSCRIPTION_KEY='<Κωδικός API>' \
-  CRON_SECRET="$CRON_SECRET" \
-  ALLOWED_EMAIL='<your login email>' \
-  ALLOWED_ORIGIN='https://<github-user>.github.io'
-# optional, defaults to production https://mydatapi.aade.gr/myDATA
-# supabase secrets set MYDATA_BASE_URL='https://mydataapidev.aade.gr'
+3. Πάτα Save.
 
-supabase functions deploy sync-mydata --no-verify-jwt
-```
-`--no-verify-jwt` is required because the cron call has no user JWT. The function checks
-both callers itself: a user JWT, or the `x-cron-secret` header.
+### ☐ 6. Βάση δεδομένων (ένα SQL αρχείο)
+1. Άνοιξε το αρχείο [supabase/setup.sql](https://raw.githubusercontent.com/kokommatas-collab/vat-tracker/main/supabase/setup.sql) και αντέγραψε **όλο** το κείμενο.
+2. Στο Supabase: **SQL Editor → New query**. Κάνε επικόλληση.
+3. Βρες τη γραμμή `project_ref text := 'ΒΑΛΕ_ΤΟ_PROJECT_REF';`. Αντικατέστησε το `ΒΑΛΕ_ΤΟ_PROJECT_REF` με το Project ID σου (κράτα τα μονά εισαγωγικά).
+4. Πάτα **Run**. Στο τέλος πρέπει να δεις **«OK — η βάση είναι έτοιμη»**.
+   - Αν δεις «Συμπλήρωσε το project_ref», δεν άλλαξες τη γραμμή του βήματος 3.
 
-### 5. Daily sync (pg_cron)
-The migration schedules `sync-mydata-daily` at 04:00 UTC. It reads two Vault secrets, which
-you create once in **SQL Editor**. Use the same `CRON_SECRET` value as in step 4:
-```sql
-select vault.create_secret('https://<PROJECT_REF>.supabase.co/functions/v1/sync-mydata', 'sync_mydata_url');
-select vault.create_secret('<CRON_SECRET>', 'sync_mydata_cron_secret');
-```
-Check runs with `select * from cron.job_run_details order by start_time desc limit 5;`
-and `select * from sync_log order by id desc limit 5;`.
+### ☐ 7. Edge Function
+1. **Edge Functions → Deploy a new function → Via Editor**.
+2. Όνομα function: **`sync-mydata`**, ακριβώς έτσι.
+3. Σβήσε τον κώδικα-παράδειγμα.
+4. Άνοιξε το [supabase/dashboard/index.ts](https://raw.githubusercontent.com/kokommatas-collab/vat-tracker/main/supabase/dashboard/index.ts), αντέγραψε όλο το κείμενο και επικόλλησέ το.
+5. Πάτα **Deploy function**.
+6. Στη σελίδα της function: **Details** (ή Settings). Απενεργοποίησε το **«Verify JWT» / «Enforce JWT verification»** και πάτα Save.
+   - Χρειάζεται γιατί η ημερήσια κλήση δεν έχει login. Η function ελέγχει μόνη της ποιος την καλεί.
 
-### 6. Frontend (GitHub Pages)
-1. Edit `docs/config.js` with your project URL and anon key (**Project Settings → API**).
-2. Under GitHub **Settings → Pages**, choose **Deploy from a branch**, then branch `main` and folder `/docs`.
-3. Under Supabase **Authentication → URL Configuration**, set Site URL to `https://<github-user>.github.io/vat-tracker/`.
-4. Open the URL in Safari on the iPhone, then Share → **Add to Home Screen**.
+### ☐ 8. Έλεγχος τιμών Vault (δεν πληκτρολογείς τίποτα)
+Το βήμα 6 έχει ήδη φτιάξει μόνο του τα δύο μυστικά. Πήγαινε **Integrations → Vault** (ή **Project Settings → Vault**) και βεβαιώσου ότι υπάρχουν:
+- `sync_mydata_url`
+- `sync_mydata_cron_secret` (τυχαίο κλειδί για την ημερήσια ενημέρωση στις ~07:00)
 
-## First production sync: check the sign of credit notes
+Δεν χρειάζεται να τα αντιγράψεις πουθενά.
 
-`RequestVatInfo` has no document type (`invType`), so credit notes (5.x) can't be identified
-directly. The sync stores amounts exactly as myDATA returns them. It also records how many
-documents had a negative `Vat*` amount (`sync_log.negative_docs`). If none did, it writes a
-warning, which is shown on screen.
+### ☐ 9. `docs/config.js`: δύο τιμές
+1. Στο Supabase: **Project Settings → API Keys**. Βρες:
+   - **Project URL**: `https://<Project ID>.supabase.co` (φαίνεται και στο **Project Settings → Data API**)
+   - **anon public** key: στην καρτέλα «Legacy API keys». Αν δεν υπάρχει, πάρε το **Publishable key** (`sb_publishable_…`).
+2. ⚠️ **Ποτέ** το `service_role` ή το Secret key.
+3. Στο GitHub (Safari, github.com): άνοιξε το `docs/config.js` και πάτα ✏️ (Edit).
+4. Άλλαξε τις δύο γραμμές:
+   ```js
+   export const SUPABASE_URL = "https://<Project ID>.supabase.co";
+   export const SUPABASE_ANON_KEY = "<anon public ή publishable key>";
+   ```
+5. **Commit changes** → στο branch `main`.
 
-After the first sync covering a quarter in which you issued or received a credit note, run:
+### ☐ 10. GitHub Pages
+1. Στο repo: **Settings → Pages**.
+2. **Source: Deploy from a branch**. Branch **`main`**, φάκελος **`/docs`**. Πάτα Save.
+3. Περίμενε 1–2 λεπτά. Η διεύθυνση είναι **https://kokommatas-collab.github.io/vat-tracker/**
+4. Στο Supabase: **Authentication → URL Configuration → Site URL**. Βάλε την ίδια διεύθυνση και πάτα Save.
+
+### ☐ 11. Πρώτος συγχρονισμός
+1. Άνοιξε τη διεύθυνση στο Safari και συνδέσου με το email/κωδικό του βήματος 4.
+2. Πάτα **Ανανέωση**. Σε λίγα δευτερόλεπτα βλέπεις «Τελευταία ενημέρωση: …» και το ποσό.
+   - Αν βγει κόκκινο μήνυμα, στείλε μου ακριβώς το κείμενο.
+3. Αν έχεις πιστωτικό υπόλοιπο από το προηγούμενο τρίμηνο, πάτα ✎ και γράψε το ποσό.
+4. **Κοινοποίηση → Προσθήκη στην οθόνη Αφετηρίας** για να το έχεις σαν εφαρμογή.
+
+### ☐ 12. Έλεγχος πρόσημου πιστωτικών (μία φορά)
+Το myDATA δεν λέει τον τύπο κάθε παραστατικού, οπότε η εφαρμογή δεν ξεχωρίζει μόνη της τα πιστωτικά.
+
+Αν στον πρώτο συγχρονισμό δεν βρεθεί κανένα αρνητικό ποσό, εμφανίζεται **μία φορά** κίτρινο μήνυμα. Μετά από συγχρονισμό που καλύπτει τρίμηνο με πιστωτικό (5.x), τρέξε στο **SQL Editor**:
 ```sql
 select negative_docs, warning, rows from sync_log where status = 'ok' order by id desc limit 1;
 ```
-- `negative_docs > 0`: credit notes come back negative, and the totals are correct as-is.
-- `negative_docs = 0` with a known credit note in the window: credit notes come back positive and are currently **added**. Report this so that sign handling can be added, for example by looking up `invType` via another endpoint.
+- **`negative_docs > 0`**: τα πιστωτικά έρχονται αρνητικά. Όλα σωστά.
+- **`negative_docs = 0`** ενώ ξέρεις ότι υπάρχει πιστωτικό: έρχονται θετικά και προστίθενται λάθος. Πες μου να το διορθώσω.
 
-## Tests
+---
 
+## Repository layout
+
+| Path | What |
+|---|---|
+| `docs/` | Static site for GitHub Pages: `index.html`, `styles.css`, `script.js`, `calc.js`, `config.js`, PWA files |
+| `supabase/setup.sql` | The whole database setup: tables, RLS, view, Vault secrets, cron. Paste it into the SQL Editor. |
+| `supabase/dashboard/index.ts` | **Generated** single-file Edge Function to paste into the dashboard editor |
+| `supabase/functions/sync-mydata/` | Source modules and tests. `build_single_file.ts` regenerates the dashboard file. |
+
+## Security model
+- **RLS on every table:**
+  - `anon` has no grants.
+  - A logged-in user can read, and can write only `quarter_credit`.
+  - `vat_entries` and `sync_log` are written only by the Edge Function, using the service role.
+- **Signups are disabled.** `ALLOWED_EMAIL` additionally restricts the manual sync to you.
+- **Credentials:**
+  - The myDATA credentials live only in Edge Function secrets.
+  - The cron secret is generated inside Vault and checked by `check_cron_secret()`, which only the service role can execute.
+  - `docs/config.js` holds only the public project URL and anon key.
+- **Read-only toward myDATA:** the function calls only `RequestVatInfo`.
+- **No data caching:** the service worker caches static files only, never API data.
+
+## Development
 ```bash
 cd supabase/functions/sync-mydata
-deno test --no-check   # XML parsing, pagination/retry, credit-note sign, quarter/VAT calculation
+deno test --allow-read                                   # parsing, pagination/retry, credit-note sign, VAT/quarter calc
+deno run --allow-read --allow-write build_single_file.ts # regenerate supabase/dashboard/index.ts after edits
 ```
+A test fails if `supabase/dashboard/index.ts` is out of date. To test against the myDATA
+dev environment, add the secret `MYDATA_BASE_URL=https://mydataapidev.aade.gr`. Dev
+credentials come from https://mydata-dev-register.azurewebsites.net.

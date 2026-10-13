@@ -125,3 +125,9 @@ Deno.test("fetchVatInfo retries 5xx, but not 401", async () => {
   await assert.rejects(fetchVatInfo(cfg, "2026-10-01", "2026-10-13", denied, noSleep), MyDataError);
   assert.equal(calls, 1);
 });
+
+Deno.test("summarize: credit-note warning is raised at most once", () => {
+  const entries = parseVatInfo(doc(SALE + PURCHASE)).entries;
+  assert.notEqual(summarize(entries, false).warning, null);
+  assert.equal(summarize(entries, true).warning, null);
+});

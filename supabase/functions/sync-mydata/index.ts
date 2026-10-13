@@ -27,20 +27,17 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function safeEqual(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 const db = createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false },
 });
 
 async function authorize(req: Request): Promise<"cron" | "manual" | null> {
   const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret) return safeEqual(cronSecret, env("CRON_SECRET")) ? "cron" : null;
+  if (cronSecret) {
+    // The secret lives only in Supabase Vault (see setup.sql).
+    const { data, error } = await db.rpc("check_cron_secret", { secret: cronSecret });
+    return !error && data === true ? "cron" : null;
+  }
 
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!token) return null;
@@ -76,7 +73,10 @@ Deno.serve(async (req) => {
       from,
       to,
     );
-    const { rows, negativeDocs, warning } = summarize(entries);
+    // Credit-note sign warning: only until it has been raised (or negatives seen) once.
+    const { count: checked } = await db.from("sync_log").select("id", { count: "exact", head: true })
+      .or("warning.not.is.null,negative_docs.gt.0");
+    const { rows, negativeDocs, warning } = summarize(entries, (checked ?? 0) > 0);
     const now = new Date().toISOString();
 
     for (let i = 0; i < rows.length; i += 500) {
