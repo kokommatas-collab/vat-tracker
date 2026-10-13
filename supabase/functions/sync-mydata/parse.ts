@@ -69,8 +69,22 @@ function parseEntry(xml: string): VatEntry {
   };
 }
 
+// The prod API wraps the real XML as an escaped .NET string:
+// <string xmlns="http://schemas.microsoft.com/2003/10/Serialization/">&lt;?xml ...&gt;&lt;RequestedVatInfo ...</string>
+// Unwrap it (possibly more than once) before parsing.
+function unwrap(body: string): string {
+  let xml = body.trim();
+  for (let i = 0; i < 3; i++) {
+    const m = xml.match(/^(?:<\?xml[^>]*\?>\s*)?<string(?:\s[^>]*)?>([\s\S]*)<\/string>$/);
+    if (!m) break;
+    xml = decode(m[1]).trim();
+  }
+  return xml;
+}
+
 /** Throws MyDataError if the body is an error response or an unexpected shape. */
-export function parseVatInfo(xml: string): VatInfoPage {
+export function parseVatInfo(body: string): VatInfoPage {
+  const xml = unwrap(body);
   const errors = blocks(xml, "error");
   if (errors.length > 0) {
     const msgs = errors.map((e) => `[${text(e, "code") ?? "?"}] ${text(e, "message") ?? ""}`.trim());

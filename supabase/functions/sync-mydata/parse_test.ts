@@ -33,6 +33,19 @@ Deno.test("negative-amount document (credit note) keeps its sign", () => {
   assert.equal(e.has_negative, true);
 });
 
+Deno.test("unwraps the escaped .NET <string> envelope returned by prod", () => {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const body = `<string xmlns="http://schemas.microsoft.com/2003/10/Serialization/">${
+    esc(doc(SALE + PURCHASE))
+  }</string>`;
+  const { entries } = parseVatInfo(body);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].out_vat, 25.3);
+  assert.equal(entries[1].in_vat, 12);
+  const empty = `<string xmlns="http://schemas.microsoft.com/2003/10/Serialization/">${esc(doc(""))}</string>`;
+  assert.deepEqual(parseVatInfo(empty).entries, []);
+});
+
 Deno.test("cancelled flag", () => {
   const xml = doc(SALE.replace("<IsCancelled>false", "<IsCancelled>true"));
   assert.equal(parseVatInfo(xml).entries[0].is_cancelled, true);
