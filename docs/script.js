@@ -3,7 +3,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import {
   aggregate, currentQuarter, formatEur, monthLabel, quarterLabel, quarterMonths, quarterRange,
   quarterShort, vatPosition,
-} from "./calc.js";
+} from "./calc.js?v=2";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
