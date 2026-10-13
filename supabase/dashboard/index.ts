@@ -39,6 +39,38 @@ function syncWindow(now: Date = new Date()): { from: string; to: string } {
   return { from: `${previousQuarterStart(to).slice(0, 4)}-01-01`, to };
 }
 
+/** "YYYY-MM-DD" → "YYYY-Qn" */
+function quarterOfDate(isoDate: string): string {
+  const [y, m] = isoDate.split("-").map(Number);
+  return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+}
+
+/** Quarter before "YYYY-Qn". */
+function previousQuarter(quarter: string): string {
+  const [y, q] = quarter.split("-Q").map(Number);
+  return q === 1 ? `${y - 1}-Q4` : `${y}-Q${q - 1}`;
+}
+
+/**
+ * Filing/payment deadline of the quarterly VAT return (Φ2) for "YYYY-Qn":
+ * last working day (Mon–Fri) of the month after the quarter. Public holidays
+ * are not taken into account. Must match deadlineOf() in docs/calc.js.
+ */
+function vatDeadline(quarter: string): string {
+  const [y, q] = quarter.split("-Q").map(Number);
+  const month = q * 3 + 1; // 1-based month after the quarter (13 → January next year)
+  const year = month > 12 ? y + 1 : y;
+  const m = month > 12 ? 1 : month;
+  const d = new Date(Date.UTC(year, m, 0)); // last day of month m
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Whole days from `from` to `to` ("YYYY-MM-DD"). */
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
 // ---- parse.ts --------------------------------------------------------------
 
 // Parser for the RequestVatInfo response (myDATA API v2.0.2, §6.4).
@@ -162,6 +194,70 @@ function parseVatInfo(body: string): VatInfoPage {
   };
 }
 
+// ---- docs.ts ---------------------------------------------------------------
+
+// Parser for RequestDocs (documents other entities issued to me = my expenses).
+// Used only to describe unclassified expense documents (who, which invoice, how much);
+// the VAT figures themselves come from RequestVatInfo.
+
+
+interface ReceivedDoc {
+  mark: string;
+  issuer_vat: string | null;
+  issuer_name: string | null; // usually absent for Greek issuers
+  series: string | null;
+  aa: string | null;
+  issue_date: string | null; // YYYY-MM-DD
+  inv_type: string | null;
+  net: number;
+  vat: number;
+  gross: number;
+}
+
+interface DocsPage {
+  docs: ReceivedDoc[];
+  next: { partitionKey: string; rowKey: string } | null;
+}
+
+function parseInvoice(xml: string): ReceivedDoc | null {
+  const mark = text(xml, "mark");
+  if (!mark) return null;
+  const issuer = blocks(xml, "issuer")[0] ?? "";
+  const header = blocks(xml, "invoiceHeader")[0] ?? "";
+  const summary = blocks(xml, "invoiceSummary")[0] ?? "";
+  const date = text(header, "issueDate");
+  return {
+    mark,
+    issuer_vat: text(issuer, "vatNumber"),
+    issuer_name: text(issuer, "name"),
+    series: text(header, "series"),
+    aa: text(header, "aa"),
+    issue_date: date && /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : null,
+    inv_type: text(header, "invoiceType"),
+    net: toCents(text(summary, "totalNetValue")) / 100,
+    vat: toCents(text(summary, "totalVatAmount")) / 100,
+    gross: toCents(text(summary, "totalGrossValue")) / 100,
+  };
+}
+
+/** Throws MyDataError on an error response or an unexpected shape. */
+function parseDocs(body: string): DocsPage {
+  const xml = unwrap(body);
+  const errors = blocks(xml, "error");
+  if (errors.length > 0) {
+    const msgs = errors.map((e) => `[${text(e, "code") ?? "?"}] ${text(e, "message") ?? ""}`.trim());
+    throw new MyDataError(`myDATA RequestDocs: ${msgs.join("; ")}`);
+  }
+  if (!/<(?:[\w-]+:)?RequestedDoc[\s>/]/.test(xml)) {
+    throw new MyDataError(`Απρόσμενη απάντηση RequestDocs: ${xml.slice(0, 200)}`);
+  }
+  const docs = blocks(xml, "invoice").map(parseInvoice).filter((d): d is ReceivedDoc => d !== null);
+  const token = blocks(xml, "continuationToken")[0];
+  const partitionKey = token ? text(token, "nextPartitionKey") : null;
+  const rowKey = token ? text(token, "nextRowKey") : null;
+  return { docs, next: partitionKey && rowKey ? { partitionKey, rowKey } : null };
+}
+
 // ---- summary.ts ------------------------------------------------------------
 
 interface SyncSummary {
@@ -198,8 +294,8 @@ function summarize(entries: VatEntry[], alreadyChecked = false): SyncSummary {
 
 // ---- mydata.ts -------------------------------------------------------------
 
-// RequestVatInfo client: pagination via continuationToken + retry on transient errors.
-// Read-only: this module only ever calls RequestVatInfo.
+// myDATA client: pagination via continuationToken + retry on transient errors.
+// Read-only: this module only ever calls RequestVatInfo and RequestDocs.
 
 
 const PROD_BASE_URL = "https://mydatapi.aade.gr/myDATA";
@@ -268,6 +364,297 @@ async function fetchVatInfo(
   throw new MyDataError(`Υπέρβαση ορίου σελίδων (${MAX_PAGES})`);
 }
 
+/** Documents issued to me (expenses) in the window, via RequestDocs (mark > 0). */
+async function fetchReceivedDocs(
+  cfg: MyDataConfig,
+  from: string,
+  to: string,
+  fetchFn: Fetch = fetch,
+  sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+): Promise<ReceivedDoc[]> {
+  const docs: ReceivedDoc[] = [];
+  let next: { partitionKey: string; rowKey: string } | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      mark: "0",
+      dateFrom: toMyDataDate(from),
+      dateTo: toMyDataDate(to),
+    });
+    if (next) {
+      params.set("nextPartitionKey", next.partitionKey);
+      params.set("nextRowKey", next.rowKey);
+    }
+    const xml = await getWithRetry(`${cfg.baseUrl}/RequestDocs?${params}`, cfg, fetchFn, sleep);
+    const result = parseDocs(xml);
+    docs.push(...result.docs);
+    if (!result.next) return docs;
+    next = result.next;
+  }
+  throw new MyDataError(`Υπέρβαση ορίου σελίδων RequestDocs (${MAX_PAGES})`);
+}
+
+// ---- webpush.ts ------------------------------------------------------------
+
+// Minimal Web Push sender with WebCrypto only (no dependencies):
+// VAPID (RFC 8292, ES256 JWT) + message encryption "aes128gcm" (RFC 8291 / RFC 8188).
+
+interface PushSubscriptionJSON {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+interface VapidKeys {
+  publicKey: string; // base64url, 65-byte uncompressed P-256 point
+  privateJwk: JsonWebKey; // ECDSA P-256 private key
+}
+
+const enc = new TextEncoder();
+const B = (u: Uint8Array) => u as unknown as BufferSource; // TS 5.7 Uint8Array generics vs WebCrypto types
+
+function b64url(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function unb64url(s: string): Uint8Array {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let i = 0;
+  for (const p of parts) {
+    out.set(p, i);
+    i += p.length;
+  }
+  return out;
+}
+
+/** New VAPID key pair (stored once by the function, never handled by a person). */
+async function generateVapidKeys(): Promise<VapidKeys> {
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+  const privateJwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+  return { publicKey: b64url(raw), privateJwk };
+}
+
+async function vapidAuthorization(endpoint: string, keys: VapidKeys, subject: string): Promise<string> {
+  const header = b64url(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const payload = b64url(enc.encode(JSON.stringify({
+    aud: new URL(endpoint).origin,
+    exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+    sub: subject,
+  })));
+  const key = await crypto.subtle.importKey("jwk", keys.privateJwk as JsonWebKey, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, B(enc.encode(`${header}.${payload}`))));
+  return `vapid t=${header}.${payload}.${b64url(sig)}, k=${keys.publicKey}`;
+}
+
+async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, bytes: number): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", B(ikm), "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: B(salt), info: B(info) }, key, bytes * 8));
+}
+
+/**
+ * Encrypts `plaintext` for a subscription (single aes128gcm record).
+ * `ephemeral` and `salt` are injectable for tests.
+ */
+async function encryptPayload(
+  sub: PushSubscriptionJSON,
+  plaintext: Uint8Array,
+  ephemeral?: CryptoKeyPair,
+  salt: Uint8Array = crypto.getRandomValues(new Uint8Array(16)),
+): Promise<Uint8Array> {
+  const uaPublic = unb64url(sub.keys.p256dh);
+  const authSecret = unb64url(sub.keys.auth);
+  const as = ephemeral ?? await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey("raw", as.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", B(uaPublic), { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, as.privateKey, 256));
+
+  const ikm = await hkdf(authSecret, ecdh, concat(enc.encode("WebPush: info\0"), uaPublic, asPublic), 32);
+  const cek = await hkdf(salt, ikm, enc.encode("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = await hkdf(salt, ikm, enc.encode("Content-Encoding: nonce\0"), 12);
+
+  const aes = await crypto.subtle.importKey("raw", B(cek), "AES-GCM", false, ["encrypt"]);
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: B(nonce) }, aes, B(concat(plaintext, new Uint8Array([2])))));
+
+  const rs = new Uint8Array([0, 0, 16, 0]); // record size 4096
+  return concat(salt, rs, new Uint8Array([asPublic.length]), asPublic, cipher);
+}
+
+interface PushResult {
+  ok: boolean;
+  gone: boolean; // subscription expired/unsubscribed → delete it
+  status: number;
+}
+
+async function sendPush(
+  sub: PushSubscriptionJSON,
+  message: unknown,
+  keys: VapidKeys,
+  subject: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<PushResult> {
+  const body = await encryptPayload(sub, enc.encode(JSON.stringify(message)));
+  const res = await fetchFn(sub.endpoint, {
+    method: "POST",
+    headers: {
+      "Authorization": await vapidAuthorization(sub.endpoint, keys, subject),
+      "Content-Encoding": "aes128gcm",
+      "Content-Type": "application/octet-stream",
+      "TTL": "86400",
+      "Urgency": "normal",
+    },
+    body: B(body),
+  });
+  await res.body?.cancel();
+  return { ok: res.ok, gone: res.status === 404 || res.status === 410, status: res.status };
+}
+
+// ---- notify.ts -------------------------------------------------------------
+
+// Push notifications: VAPID keys (generated once, kept in the app_secret table that
+// only the service role can read), sending to all saved subscriptions, and the
+// messages for new documents and the VAT return deadline.
+
+
+// deno-lint-ignore no-explicit-any
+type Db = any;
+
+const eur = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
+const money = (x: number) => eur.format(x);
+const cents = (x: unknown) => Math.round(Number(x || 0) * 100);
+
+async function vapidKeys(db: Db): Promise<VapidKeys> {
+  const read = async () => (await db.from("app_secret").select("value").eq("key", "vapid").maybeSingle()).data?.value;
+  const existing = await read();
+  if (existing) return existing as VapidKeys;
+  const keys = await generateVapidKeys();
+  const { error } = await db.from("app_secret").insert({ key: "vapid", value: keys });
+  return error ? (await read()) as VapidKeys : keys; // lost a race → use the stored one
+}
+
+interface Message {
+  title: string;
+  body: string;
+  tag?: string;
+}
+
+async function notifyAll(db: Db, message: Message): Promise<{ sent: number; removed: number }> {
+  const { data: subs } = await db.from("push_subscriptions").select("endpoint, p256dh, auth");
+  if (!subs?.length) return { sent: 0, removed: 0 };
+  const keys = await vapidKeys(db);
+  const subject = `mailto:${Deno.env.get("ALLOWED_EMAIL") ?? "noreply@example.com"}`;
+  let sent = 0, removed = 0;
+  for (const s of subs) {
+    try {
+      const r = await sendPush({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, message, keys, subject);
+      if (r.ok) sent++;
+      else if (r.gone) {
+        await db.from("push_subscriptions").delete().eq("endpoint", s.endpoint);
+        removed++;
+      }
+    } catch (_) {
+      // one broken subscription must not stop the others
+    }
+  }
+  return { sent, removed };
+}
+
+function quarterBounds(quarter: string) {
+  const [y, q] = quarter.split("-Q").map(Number);
+  const start = `${y}-${String((q - 1) * 3 + 1).padStart(2, "0")}-01`;
+  const end = new Date(Date.UTC(y, q * 3, 0)).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+/** Same rule as the app: output − (input + unclassified) ± manual − carried credit. */
+async function quarterPosition(db: Db, quarter: string): Promise<{ kind: "debit" | "credit"; amount: number }> {
+  const { start, end } = quarterBounds(quarter);
+  const [vat, manual, credit] = await Promise.all([
+    db.from("vat_entries").select("out_vat, in_vat, unclassified_vat").eq("is_cancelled", false)
+      .gte("issue_date", start).lte("issue_date", end).range(0, 9999),
+    db.from("manual_vat").select("kind, vat").gte("entry_date", start).lte("entry_date", end),
+    db.from("quarter_credit").select("amount").eq("quarter", quarter).maybeSingle(),
+  ]);
+  let c = 0;
+  for (const r of vat.data ?? []) c += cents(r.out_vat) - cents(r.in_vat) - cents(r.unclassified_vat);
+  for (const r of manual.data ?? []) c += r.kind === "out" ? cents(r.vat) : -cents(r.vat);
+  c -= cents(credit.data?.amount);
+  return { kind: c > 0 ? "debit" : "credit", amount: Math.abs(c) / 100 };
+}
+
+const positionText = (p: { kind: string; amount: number }) =>
+  `${p.kind === "debit" ? "Πληρωτέο" : "Πιστωτικό"} ${money(p.amount)}`;
+
+function quarterName(quarter: string): string {
+  const [y, q] = quarter.split("-Q").map(Number);
+  return `${q}ου τριμήνου ${y}`;
+}
+
+function newDocsMessage(newRows: Omit<VatEntry, "has_negative">[], position: { kind: string; amount: number }): Message {
+  const out = newRows.reduce((a, r) => a + cents(r.out_vat), 0) / 100;
+  const inp = newRows.reduce((a, r) => a + cents(r.in_vat) + cents(r.unclassified_vat), 0) / 100;
+  const parts = [];
+  if (out) parts.push(`ΦΠΑ εσόδων ${money(out)}`);
+  if (inp) parts.push(`ΦΠΑ εξόδων ${money(inp)}`);
+  const n = newRows.length;
+  return {
+    title: n === 1 ? "Νέο παραστατικό στο myDATA" : `${n} νέα παραστατικά στο myDATA`,
+    body: `${parts.length ? parts.join(", ") + ". " : ""}Θέση τριμήνου: ${positionText(position)}.`,
+    tag: "new-docs",
+  };
+}
+
+/** Deadline reminder for the previous quarter, 5 days before, 1 day before and on the day. */
+function deadlineReminder(today: string): { key: string; quarter: string; deadline: string; daysLeft: number } | null {
+  const quarter = previousQuarter(quarterOfDate(today));
+  const deadline = vatDeadline(quarter);
+  const daysLeft = daysBetween(today, deadline);
+  if (![5, 1, 0].includes(daysLeft)) return null;
+  return { key: `deadline-${quarter}-${daysLeft}`, quarter, deadline, daysLeft };
+}
+
+function deadlineMessage(r: { quarter: string; deadline: string; daysLeft: number }, position: { kind: string; amount: number }): Message {
+  const [y, m, d] = r.deadline.split("-");
+  const when = r.daysLeft === 0 ? "σήμερα" : r.daysLeft === 1 ? "αύριο" : `σε ${r.daysLeft} μέρες`;
+  return {
+    title: `Δήλωση ΦΠΑ ${quarterName(r.quarter)}: ${when}`,
+    body: `Προθεσμία ${d}/${m}/${y}. Εκτίμηση: ${positionText(position)}.` +
+      (position.kind === "credit" ? " Η δήλωση υποβάλλεται κανονικά." : ""),
+    tag: `deadline-${r.quarter}`,
+  };
+}
+
+/** Runs after a cron sync. Never throws. */
+async function cronNotifications(db: Db, newRows: Omit<VatEntry, "has_negative">[], hadPrevious: boolean) {
+  const result: string[] = [];
+  try {
+    const today = athensToday();
+    if (hadPrevious && newRows.length > 0) {
+      const pos = await quarterPosition(db, quarterOfDate(today));
+      const r = await notifyAll(db, newDocsMessage(newRows, pos));
+      result.push(`new-docs sent=${r.sent}`);
+    }
+    const reminder = deadlineReminder(today);
+    if (reminder) {
+      const { error } = await db.from("notify_log").insert({ key: reminder.key }); // unique: once per reminder
+      if (!error) {
+        const pos = await quarterPosition(db, reminder.quarter);
+        const r = await notifyAll(db, deadlineMessage(reminder, pos));
+        result.push(`${reminder.key} sent=${r.sent}`);
+      }
+    }
+  } catch (e) {
+    result.push(`notify error: ${(e as Error).message}`);
+  }
+  return result;
+}
+
 // ---- index.ts --------------------------------------------------------------
 
 // sync-mydata: pulls RequestVatInfo for the previous + current quarter and
@@ -316,12 +703,61 @@ async function authorize(req: Request): Promise<"cron" | "manual" | null> {
   return "manual";
 }
 
+async function readBody(req: Request): Promise<Record<string, unknown>> {
+  try {
+    const b = await req.json();
+    return b && typeof b === "object" ? b : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+/** Push-notification actions from the app (logged-in user only). */
+async function pushAction(action: string, body: Record<string, unknown>) {
+  if (action === "vapid-public-key") {
+    return json({ publicKey: (await vapidKeys(db)).publicKey });
+  }
+  if (action === "subscribe") {
+    const sub = body.subscription as { endpoint?: string; keys?: { p256dh?: string; auth?: string } } | undefined;
+    if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return json({ error: "Bad subscription" }, 400);
+    const { error } = await db.from("push_subscriptions").upsert({
+      endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth,
+      user_agent: String(body.userAgent ?? "").slice(0, 300),
+    }, { onConflict: "endpoint" });
+    return error ? json({ error: error.message }, 500) : json({ status: "ok" });
+  }
+  if (action === "unsubscribe") {
+    await db.from("push_subscriptions").delete().eq("endpoint", String(body.endpoint ?? ""));
+    return json({ status: "ok" });
+  }
+  if (action === "test-push") {
+    const r = await notifyAll(db, {
+      title: "Ισοζύγιο ΦΠΑ",
+      body: "Οι ειδοποιήσεις λειτουργούν. Θα ενημερώνεσαι για νέα παραστατικά και για την προθεσμία της δήλωσης.",
+      tag: "test",
+    });
+    return json({ status: "ok", ...r });
+  }
+  return json({ error: `Unknown action ${action}` }, 400);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const trigger = await authorize(req);
   if (!trigger) return json({ error: "Unauthorized" }, 401);
+
+  const body = await readBody(req);
+  const action = typeof body.action === "string" ? body.action : "sync";
+  if (action !== "sync") {
+    if (trigger !== "manual") return json({ error: "Unauthorized" }, 401);
+    try {
+      return await pushAction(action, body);
+    } catch (e) {
+      return json({ error: (e as Error).message }, 500);
+    }
+  }
 
   const { from, to } = syncWindow();
   const { data: log, error: logErr } = await db
@@ -331,21 +767,24 @@ Deno.serve(async (req) => {
     .single();
   if (logErr) return json({ error: logErr.message }, 500);
 
+  const cfg = {
+    baseUrl: Deno.env.get("MYDATA_BASE_URL") ?? PROD_BASE_URL,
+    userId: env("MYDATA_USER_ID"),
+    subscriptionKey: env("MYDATA_SUBSCRIPTION_KEY"),
+  };
+
   try {
-    const entries = await fetchVatInfo(
-      {
-        baseUrl: Deno.env.get("MYDATA_BASE_URL") ?? PROD_BASE_URL,
-        userId: env("MYDATA_USER_ID"),
-        subscriptionKey: env("MYDATA_SUBSCRIPTION_KEY"),
-      },
-      from,
-      to,
-    );
+    const entries = await fetchVatInfo(cfg, from, to);
     // Credit-note sign warning: only until it has been raised (or negatives seen) once.
     const { count: checked } = await db.from("sync_log").select("id", { count: "exact", head: true })
       .or("warning.not.is.null,negative_docs.gt.0");
     const { rows, negativeDocs, warning } = summarize(entries, (checked ?? 0) > 0);
     const now = new Date().toISOString();
+
+    // Which documents are new (for the "new document" notification).
+    const { data: known } = await db.from("vat_entries").select("mark").gte("issue_date", from).range(0, 49999);
+    const knownMarks = new Set((known ?? []).map((r: { mark: string }) => r.mark));
+    const newRows = rows.filter((r) => !knownMarks.has(r.mark) && !r.is_cancelled);
 
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500).map((r) => ({ ...r, synced_at: now }));
@@ -353,15 +792,31 @@ Deno.serve(async (req) => {
       if (error) throw new Error(`DB: ${error.message}`);
     }
 
+    // Expense documents (supplier, invoice number) — optional, never fails the sync.
+    let docsError: string | null = null;
+    try {
+      const docs = await fetchReceivedDocs(cfg, from, to);
+      for (let i = 0; i < docs.length; i += 500) {
+        const chunk = docs.slice(i, i + 500).map((d) => ({ ...d, synced_at: now }));
+        const { error } = await db.from("received_docs").upsert(chunk, { onConflict: "mark" });
+        if (error) throw new Error(`DB: ${error.message}`);
+      }
+    } catch (e) {
+      docsError = (e as Error).message;
+    }
+
+    const notified = trigger === "cron" ? await cronNotifications(db, newRows, knownMarks.size > 0) : [];
+
     await db.from("sync_log").update({
       status: "ok",
       finished_at: new Date().toISOString(),
       rows: rows.length,
       negative_docs: negativeDocs,
       warning,
+      docs_error: docsError,
     }).eq("id", log.id);
 
-    return json({ status: "ok", rows: rows.length, negativeDocs, warning });
+    return json({ status: "ok", rows: rows.length, newRows: newRows.length, negativeDocs, warning, docsError, notified });
   } catch (e) {
     const message = (e as Error).message;
     await db.from("sync_log").update({

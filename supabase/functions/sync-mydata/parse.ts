@@ -30,22 +30,22 @@ export interface VatInfoPage {
 export class MyDataError extends Error {}
 
 // Matches <tag>, <ns:tag> and <tag attr="..."> forms.
-function blocks(xml: string, tag: string): string[] {
+export function blocks(xml: string, tag: string): string[] {
   const re = new RegExp(`<(?:[\\w-]+:)?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w-]+:)?${tag}>`, "g");
   return [...xml.matchAll(re)].map((m) => m[1]);
 }
 
-function text(xml: string, tag: string): string | null {
+export function text(xml: string, tag: string): string | null {
   const b = blocks(xml, tag)[0];
   return b === undefined ? null : decode(b.trim());
 }
 
-function decode(s: string): string {
+export function decode(s: string): string {
   return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 
-function toCents(raw: string | null): number {
+export function toCents(raw: string | null): number {
   if (raw === null || raw === "") return 0;
   const n = Number(raw);
   if (!Number.isFinite(n)) throw new MyDataError(`Μη έγκυρο ποσό: ${raw}`);
@@ -81,7 +81,7 @@ function parseEntry(xml: string): VatEntry {
 // The prod API wraps the real XML as an escaped .NET string:
 // <string xmlns="http://schemas.microsoft.com/2003/10/Serialization/">&lt;?xml ...&gt;&lt;RequestedVatInfo ...</string>
 // Unwrap it (possibly more than once) before parsing.
-function unwrap(body: string): string {
+export function unwrap(body: string): string {
   let xml = body.trim();
   for (let i = 0; i < 3; i++) {
     const m = xml.match(/^(?:<\?xml[^>]*\?>\s*)?<string(?:\s[^>]*)?>([\s\S]*)<\/string>$/);

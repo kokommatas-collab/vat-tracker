@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {
   aggregate, currentQuarter, formatEur, monthLabel, quarterLabel, quarterMonths, quarterOf, quarterRange, vatPosition,
 } from "../../../docs/calc.js";
-import { previousQuarterStart, syncWindow, toMyDataDate } from "./dates.ts";
+import { previousQuarterStart, syncWindow, toMyDataDate, vatDeadline } from "./dates.ts";
+import { deadlineOf, manualAsEntry, previousQuarterOf } from "../../../docs/calc.js";
 
 Deno.test("quarter boundaries", () => {
   assert.equal(quarterOf("2026-03-31"), "2026-Q1");
@@ -82,4 +83,23 @@ Deno.test("month and quarter labels/ranges", () => {
   assert.deepEqual(quarterMonths("2026-Q4"), ["2026-10", "2026-11", "2026-12"]);
   assert.deepEqual(quarterRange("2026-Q3"), { from: "01/07/2026", to: "30/09/2026" });
   assert.deepEqual(quarterRange("2024-Q1"), { from: "01/01/2024", to: "31/03/2024" });
+});
+
+Deno.test("frontend deadline matches the function's deadline for every quarter 2024–2032", () => {
+  for (let y = 2024; y <= 2032; y++) {
+    for (let q = 1; q <= 4; q++) assert.equal(deadlineOf(`${y}-Q${q}`), vatDeadline(`${y}-Q${q}`));
+  }
+  assert.equal(previousQuarterOf("2027-Q1"), "2026-Q4");
+});
+
+Deno.test("manual VAT entries are summed with myDATA documents", () => {
+  const rows = [
+    { issue_date: "2026-10-02", is_cancelled: false, out_vat: 100, in_vat: 0, unclassified_vat: 0, out_net: 416.67, in_net: 0, unclassified_net: 0 },
+    manualAsEntry({ entry_date: "2026-10-20", kind: "in", vat: 40, net: 166.67 }),
+    manualAsEntry({ entry_date: "2026-11-02", kind: "out", vat: 5, net: 0 }),
+  ];
+  const t = aggregate(rows).get("2026-Q4");
+  assert.equal(t.out_vat, 105);
+  assert.equal(t.in_vat, 40);
+  assert.deepEqual(vatPosition({ outVat: t.out_vat, inVat: t.in_vat, unclassifiedVat: t.unclassified_vat }), { kind: "debit", amount: 65 });
 });

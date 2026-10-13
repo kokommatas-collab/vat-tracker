@@ -11,11 +11,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Ισοζύγιο">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icon.svg?v=3" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon-180.png?v=3">
+  <link rel="icon" href="icon.svg?v=4" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png?v=4">
   <link rel="preload" href="fonts/commissioner-greek-full-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=3">
-  <script type="module" src="script.js?v=3"></script>
+  <link rel="stylesheet" href="styles.css?v=4">
+  <script type="module" src="script.js?v=4"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -84,6 +84,8 @@
           <p class="note" id="unclassified" hidden></p>
         </div>
 
+        <p class="deadline" id="deadline" hidden></p>
+
         <div class="hero-foot">
           <span>Πιστωτικό από προηγούμενη περίοδο <strong id="credit">—</strong></span>
           <button id="edit-credit" class="link" type="button">Αλλαγή</button>
@@ -103,6 +105,35 @@
         </section>
       </div>
 
+      <div class="columns">
+        <section class="panel">
+          <h2>Μη χαρακτηρισμένα έξοδα</h2>
+          <p class="panel-intro">Παραστατικά εξόδων του τριμήνου που περιμένουν χαρακτηρισμό. Δώσε τα στον λογιστή σου.</p>
+          <div class="rows" id="unclassified-list"></div>
+          <button class="secondary" id="copy-unclassified" type="button" hidden>Αντιγραφή λίστας</button>
+        </section>
+
+        <section class="panel">
+          <h2>ΦΠΑ εκτός myDATA</h2>
+          <p class="panel-intro">Για ποσά που δεν φαίνονται στα παραστατικά, π.χ. ΦΠΑ τελωνείου.</p>
+          <form id="manual-form" class="manual-form">
+            <div class="seg-ctl" role="radiogroup" aria-label="Είδος">
+              <label><input type="radio" name="kind" value="in" checked><span>Έξοδο</span></label>
+              <label><input type="radio" name="kind" value="out"><span>Έσοδο</span></label>
+            </div>
+            <div class="form-grid">
+              <label>Ποσό ΦΠΑ (€) <input name="vat" inputmode="decimal" required placeholder="0,00"></label>
+              <label>Καθαρή αξία (€) <input name="net" inputmode="decimal" placeholder="προαιρετικό"></label>
+              <label>Ημερομηνία <input name="date" type="date" required></label>
+              <label>Σημείωση <input name="note" maxlength="120" placeholder="π.χ. Τελωνείο Πειραιά"></label>
+            </div>
+            <button class="primary" type="submit">Προσθήκη ΦΠΑ</button>
+            <p class="error" id="manual-error" hidden></p>
+          </form>
+          <div class="rows" id="manual-list"></div>
+        </section>
+      </div>
+
       <section class="sync">
         <div>
           <p id="last-update">—</p>
@@ -110,7 +141,11 @@
           <p class="warn" id="warning" hidden></p>
           <p class="error" id="sync-error" hidden></p>
         </div>
-        <button class="primary" id="refresh-big" type="button">Ανανέωση από myDATA</button>
+        <div class="sync-actions">
+          <button class="primary" id="refresh-big" type="button">Ανανέωση από myDATA</button>
+          <button class="secondary" id="push-btn" type="button">Ειδοποιήσεις στο κινητό</button>
+        </div>
+        <p class="muted push-status" id="push-status" hidden></p>
         <p class="fine">Τα μη χαρακτηρισμένα έξοδα υπολογίζονται ως εκπιπτόμενα μέχρι να χαρακτηριστούν.
           Το τελικό ποσό το δίνει η δήλωση ΦΠΑ.</p>
       </section>

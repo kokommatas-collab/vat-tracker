@@ -211,10 +211,44 @@ button.qrow:hover .row-title { text-decoration: underline; text-underline-offset
   .sync { grid-template-columns: 1fr auto; align-items: center; }
   .sync .fine { grid-column: 1 / -1; }
   .sync .primary { width: auto; padding: 12px 22px; }
+  .sync .push-status { grid-column: 1 / -1; }
 }
 .fine { color: var(--muted); font-size: .78rem; }
 .warn { color: var(--warn); }
 .error { color: var(--error); overflow-wrap: anywhere; }
+
+/* ---------- deadline ---------- */
+.deadline {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, var(--debit) 9%, transparent);
+  color: var(--ink); border-radius: 14px; padding: 12px 16px; font-size: .92rem;
+}
+.deadline strong { font-weight: 650; }
+.deadline.soon { background: color-mix(in srgb, var(--debit) 18%, transparent); }
+
+/* ---------- unclassified + manual ---------- */
+.panel-intro { color: var(--muted); font-size: .85rem; margin-bottom: 8px; }
+.row-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 2px; }
+.row-amt.neutral { color: var(--ink); }
+.panel > button.secondary { margin: 6px 0 14px; }
+
+.manual-form { display: grid; gap: 12px; margin: 6px 0 12px; }
+.form-grid { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+.form-grid input { width: 100%; min-width: 0; }
+@media (max-width: 420px) { .form-grid { grid-template-columns: 1fr; } }
+.seg-ctl {
+  display: grid; grid-template-columns: 1fr 1fr;
+  background: var(--paper); border-radius: 14px; padding: 4px;
+}
+.seg-ctl label { display: block; position: relative; color: var(--ink); font-size: .95rem; }
+.seg-ctl input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg-ctl span { display: block; text-align: center; padding: 9px; border-radius: 11px; font-weight: 600; }
+.seg-ctl input:checked + span { background: var(--surface); box-shadow: 0 1px 2px rgba(22, 33, 58, .12); }
+.seg-ctl input:focus-visible + span { outline: 2.5px solid var(--out); outline-offset: 1px; }
+
+.sync-actions { display: grid; gap: 10px; }
+@media (min-width: 880px) { .sync-actions { display: flex; } }
+.push-status { font-size: .85rem; }
 
 /* ---------- controls ---------- */
 input {
@@ -227,7 +261,13 @@ button.primary {
   color: var(--on-ink); background: var(--ink);
   border: 0; border-radius: 14px; padding: 13px; min-height: 46px; width: 100%; cursor: pointer;
 }
-button.primary:disabled { opacity: .55; }
+button.primary:disabled, button.secondary:disabled { opacity: .55; }
+button.secondary {
+  font: inherit; font-weight: 600;
+  color: var(--ink); background: var(--paper);
+  border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 18px; min-height: 46px; width: 100%; cursor: pointer;
+}
+@media (min-width: 880px) { .sync-actions button { width: auto; } }
 button.link {
   font: inherit; font-size: .9rem; font-weight: 600;
   background: none; border: 0; padding: 2px 0; color: var(--out); cursor: pointer;

@@ -92,5 +92,42 @@ export function vatPosition({ outVat, inVat, unclassifiedVat = 0, credit = 0 }) 
   return { kind: result > 0 ? "debit" : "credit", amount: Math.abs(result) / 100 };
 }
 
+/** Quarter before "YYYY-Qn". */
+export function previousQuarterOf(quarter) {
+  const [y, q] = quarter.split("-Q").map(Number);
+  return q === 1 ? `${y - 1}-Q4` : `${y}-Q${q - 1}`;
+}
+
+/**
+ * Deadline of the quarterly VAT return (Φ2) for "YYYY-Qn": last working day (Mon–Fri)
+ * of the month after the quarter; public holidays are not considered.
+ * Must match vatDeadline() in supabase/functions/sync-mydata/dates.ts.
+ */
+export function deadlineOf(quarter) {
+  const [y, q] = quarter.split("-Q").map(Number);
+  const month = q * 3 + 1;
+  const d = new Date(Date.UTC(month > 12 ? y + 1 : y, month > 12 ? 1 : month, 0));
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Today in Europe/Athens as "YYYY-MM-DD". */
+export const athensToday = (now = new Date()) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Athens" }).format(now);
+
+/** Whole days between two "YYYY-MM-DD" dates. */
+export const daysUntil = (from, to) =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+
+/** manual_vat row → a row shaped like vat_entries, so aggregate() can sum both. */
+export function manualAsEntry(m) {
+  const out = m.kind === "out";
+  return {
+    issue_date: m.entry_date, is_cancelled: false,
+    out_vat: out ? m.vat : 0, in_vat: out ? 0 : m.vat, unclassified_vat: 0,
+    out_net: out ? m.net : 0, in_net: out ? 0 : m.net, unclassified_net: 0,
+  };
+}
+
 const eur = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 export const formatEur = (x) => eur.format(Number(x || 0));

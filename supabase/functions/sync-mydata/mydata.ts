@@ -1,7 +1,8 @@
-// RequestVatInfo client: pagination via continuationToken + retry on transient errors.
-// Read-only: this module only ever calls RequestVatInfo.
+// myDATA client: pagination via continuationToken + retry on transient errors.
+// Read-only: this module only ever calls RequestVatInfo and RequestDocs.
 
 import { MyDataError, parseVatInfo, type VatEntry } from "./parse.ts";
+import { parseDocs, type ReceivedDoc } from "./docs.ts";
 import { toMyDataDate } from "./dates.ts";
 
 export const PROD_BASE_URL = "https://mydatapi.aade.gr/myDATA";
@@ -68,4 +69,34 @@ export async function fetchVatInfo(
     next = result.next;
   }
   throw new MyDataError(`Υπέρβαση ορίου σελίδων (${MAX_PAGES})`);
+}
+
+/** Documents issued to me (expenses) in the window, via RequestDocs (mark > 0). */
+export async function fetchReceivedDocs(
+  cfg: MyDataConfig,
+  from: string,
+  to: string,
+  fetchFn: Fetch = fetch,
+  sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+): Promise<ReceivedDoc[]> {
+  const docs: ReceivedDoc[] = [];
+  let next: { partitionKey: string; rowKey: string } | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      mark: "0",
+      dateFrom: toMyDataDate(from),
+      dateTo: toMyDataDate(to),
+    });
+    if (next) {
+      params.set("nextPartitionKey", next.partitionKey);
+      params.set("nextRowKey", next.rowKey);
+    }
+    const xml = await getWithRetry(`${cfg.baseUrl}/RequestDocs?${params}`, cfg, fetchFn, sleep);
+    const result = parseDocs(xml);
+    docs.push(...result.docs);
+    if (!result.next) return docs;
+    next = result.next;
+  }
+  throw new MyDataError(`Υπέρβαση ορίου σελίδων RequestDocs (${MAX_PAGES})`);
 }

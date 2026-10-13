@@ -2,7 +2,7 @@
 // file for pasting into the Supabase dashboard editor.
 // Run from this folder:  deno run --allow-read --allow-write build_single_file.ts
 
-const MODULES = ["dates.ts", "parse.ts", "summary.ts", "mydata.ts", "index.ts"];
+const MODULES = ["dates.ts", "parse.ts", "docs.ts", "summary.ts", "mydata.ts", "webpush.ts", "notify.ts", "index.ts"];
 const here = new URL(".", import.meta.url);
 export const OUTPUT = new URL("../../dashboard/index.ts", here);
 
