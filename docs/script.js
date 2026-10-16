@@ -3,7 +3,10 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import {
   aggregate, athensToday, currentQuarter, daysUntil, deadlineOf, formatEur, manualAsEntry, monthLabel,
   previousQuarterOf, quarterLabel, quarterMonths, quarterOf, quarterRange, quarterShort, vatPosition,
-} from "./calc.js?v=4";
+} from "./calc.js?v=5";
+import { prefersReducedMotion } from "./motion.js?v=5";
+import { createSheet } from "./sheet.js?v=5";
+import { pullToRefresh } from "./ptr.js?v=5";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -27,6 +30,9 @@ let entries = [];          // vat_entries rows (with mark)
 let manual = [];           // manual_vat rows
 let docsByMark = new Map(); // received_docs by mark
 let supplierNames = new Map(); // ΑΦΜ → my name for the supplier
+
+// Lets :active styles fire on touch-down in iOS Safari (instant press feedback).
+addEventListener("touchstart", () => {}, { passive: true });
 
 function show(loggedIn) {
   $("login").hidden = loggedIn;
@@ -237,16 +243,20 @@ function renderUnclassified() {
   }));
 }
 
-async function nameSupplier(vat) {
-  const name = prompt(`Όνομα για τον προμηθευτή με ΑΦΜ ${vat}:`, supplierNames.get(vat) ?? "");
-  if (name === null) return;
-  const clean = name.trim();
-  const { error } = clean
-    ? await sb.from("supplier_names").upsert({ vat_number: vat, name: clean, updated_at: new Date().toISOString() })
-    : await sb.from("supplier_names").delete().eq("vat_number", vat);
-  if (error) return alert(`Σφάλμα αποθήκευσης: ${error.message}`);
-  clean ? supplierNames.set(vat, clean) : supplierNames.delete(vat);
-  renderUnclassified();
+function nameSupplier(vat) {
+  ask({
+    title: "Προμηθευτής", label: "Όνομα", value: supplierNames.get(vat) ?? "",
+    placeholder: "π.χ. ΔΕΗ", note: `Δικό σου όνομα για τον ΑΦΜ ${vat}. Άφησέ το κενό για διαγραφή.`,
+    onSubmit: async (raw) => {
+      const clean = raw.trim();
+      const { error } = clean
+        ? await sb.from("supplier_names").upsert({ vat_number: vat, name: clean, updated_at: new Date().toISOString() })
+        : await sb.from("supplier_names").delete().eq("vat_number", vat);
+      if (error) return `Σφάλμα αποθήκευσης: ${error.message}`;
+      clean ? supplierNames.set(vat, clean) : supplierNames.delete(vat);
+      renderUnclassified();
+    },
+  });
 }
 
 $("copy-unclassified").addEventListener("click", async () => {
@@ -344,6 +354,7 @@ function renderHistory(now) {
     b.addEventListener("click", () => {
       selected = q;
       render();
+      bump();
       window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     });
     return b;
@@ -357,18 +368,62 @@ function parseAmount(input) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
 }
 
-$("edit-credit").addEventListener("click", async () => {
+// ---------- bottom sheet for single-value edits ----------
+const sheet = createSheet({
+  sheet: $("sheet"), scrim: $("scrim"), handle: $("sheet-handle"),
+  onClosed: () => $("sheet-input").blur(),
+});
+let sheetSubmit = null;
+
+/** Opens the sheet; onSubmit(raw) returns an error message, or nothing to close. */
+function ask({ title, label, value = "", placeholder = "", inputMode = "text", suffix = "", note = "", onSubmit }) {
+  $("sheet-title").textContent = title;
+  $("sheet-label").textContent = label;
+  Object.assign($("sheet-input"), { value, placeholder, inputMode });
+  $("sheet-suffix").textContent = suffix;
+  $("sheet-note").textContent = note;
+  $("sheet-error").hidden = true;
+  sheetSubmit = onSubmit;
+  sheet.show();
+  $("sheet-input").focus(); // inside the tap, so iOS opens the keyboard
+}
+$("sheet-cancel").addEventListener("click", () => sheet.hide());
+$("sheet-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("sheet-save").disabled = true;
+  const error = await sheetSubmit?.($("sheet-input").value);
+  $("sheet-save").disabled = false;
+  if (error) return setText("sheet-error", error);
+  sheet.hide();
+});
+
+/** Soft cross-fade of the hero amount when its value changes context. */
+function bump() {
+  if (prefersReducedMotion()) return;
+  $("amount").animate(
+    [{ opacity: 0, transform: "translateY(6px) scale(0.98)" }, { opacity: 1, transform: "none" }],
+    { duration: 260, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+  );
+}
+
+$("edit-credit").addEventListener("click", () => {
   const q = selected;
-  const input = prompt(`Πιστωτικό υπόλοιπο που μεταφέρεται στο ${quarterLabel(q)} (€):`,
-    String(credits.get(q) ?? 0).replace(".", ","));
-  if (input === null) return;
-  const amount = parseAmount(input);
-  if (amount === null) return alert("Μη έγκυρο ποσό");
-  const { error } = await sb.from("quarter_credit")
-    .upsert({ quarter: q, amount, updated_at: new Date().toISOString() });
-  if (error) return alert(`Σφάλμα αποθήκευσης: ${error.message}`);
-  credits.set(q, amount);
-  render();
+  const current = credits.get(q) ?? 0;
+  ask({
+    title: "Πιστωτικό", label: "Ποσό", suffix: "€", inputMode: "decimal", placeholder: "0,00",
+    value: current ? current.toFixed(2).replace(".", ",") : "",
+    note: `Πιστωτικό υπόλοιπο που μεταφέρεται στο ${quarterLabel(q)}.`,
+    onSubmit: async (raw) => {
+      const amount = raw.trim() === "" ? 0 : parseAmount(raw);
+      if (amount === null) return "Μη έγκυρο ποσό. Γράψε π.χ. 1.250,00";
+      const { error } = await sb.from("quarter_credit")
+        .upsert({ quarter: q, amount, updated_at: new Date().toISOString() });
+      if (error) return `Σφάλμα αποθήκευσης: ${error.message}`;
+      credits.set(q, amount);
+      render();
+      bump();
+    },
+  });
 });
 
 $("manual-form").date.value = athensToday();
@@ -469,9 +524,15 @@ $("push-btn").addEventListener("click", async () => {
 $("back-current").addEventListener("click", () => {
   selected = currentQuarter();
   render();
+  bump();
 });
 
-async function refresh() {
+let refreshing = null;
+function refresh() {
+  refreshing ??= doRefresh().finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function doRefresh() {
   const buttons = [$("refresh"), $("refresh-big")];
   buttons.forEach((b) => (b.disabled = true));
   $("refresh-big").textContent = "Συγχρονισμός…";
@@ -483,13 +544,26 @@ async function refresh() {
 }
 $("refresh").addEventListener("click", refresh);
 $("refresh-big").addEventListener("click", refresh);
+pullToRefresh({
+  content: $("content"), indicator: $("ptr"), onRefresh: refresh,
+  enabled: () => !$("app").hidden && !sheet.isOpen,
+});
+
+// Large title scrolls away → compact translucent navigation bar.
+new IntersectionObserver(([entry]) => {
+  $("navbar").classList.toggle("scrolled", !entry.isIntersecting);
+}, { rootMargin: "-44px 0px 0px 0px" }).observe($("large-title"));
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
+  $("login-btn").disabled = true;
+  $("login-btn").textContent = "Σύνδεση…";
   const { error } = await sb.auth.signInWithPassword({
     email: form.get("email"), password: form.get("password"),
   });
+  $("login-btn").disabled = false;
+  $("login-btn").textContent = "Σύνδεση";
   setText("login-error", error ? `Αποτυχία σύνδεσης: ${error.message}` : "", Boolean(error));
 });
 

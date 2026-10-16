@@ -1,7 +1,7 @@
 // Caches only the static app shell. Supabase/API responses (financial data)
 // are cross-origin and never cached.
-const CACHE = "vat-shell-v4";
-const SHELL = ["./", "index.html", "styles.css", "script.js", "calc.js", "config.js",
+const CACHE = "vat-shell-v5";
+const SHELL = ["./", "index.html", "styles.css", "script.js", "calc.js", "config.js", "motion.js", "sheet.js", "ptr.js",
   "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
