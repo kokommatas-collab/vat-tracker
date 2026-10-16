@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <title>Θέση ΦΠΑ</title>
-  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="ΦΠΑ">
@@ -17,47 +17,109 @@
   <script type="module" src="script.js"></script>
 </head>
 <body>
-  <main>
-    <section id="login" hidden>
-      <h1>Θέση ΦΠΑ</h1>
-      <form id="login-form">
-        <label>Email <input type="email" name="email" autocomplete="username" required></label>
-        <label>Κωδικός <input type="password" name="password" autocomplete="current-password" required></label>
-        <button type="submit">Σύνδεση</button>
-        <p class="error" id="login-error" hidden></p>
-      </form>
-    </section>
+  <!-- Login -->
+  <section id="login" class="login" hidden>
+    <img class="app-icon" src="icon-180.png" alt="" width="76" height="76">
+    <h1 class="title-1">Θέση ΦΠΑ</h1>
+    <p class="subhead secondary">Συνδέσου για να δεις την εκτίμηση του τριμήνου.</p>
+    <form id="login-form" novalidate>
+      <div class="group">
+        <label class="row field">
+          <span class="row-label">Email</span>
+          <input type="email" name="email" autocomplete="username" placeholder="όνομα@email.com" required>
+        </label>
+        <label class="row field">
+          <span class="row-label">Κωδικός</span>
+          <input type="password" name="password" autocomplete="current-password" placeholder="Απαιτείται" required>
+        </label>
+      </div>
+      <p class="footnote error-text" id="login-error" role="alert" hidden></p>
+      <button class="btn-filled" id="login-btn" type="submit">Σύνδεση</button>
+    </form>
+  </section>
 
-    <section id="app" hidden>
-      <header>
+  <!-- App -->
+  <section id="app" hidden>
+    <header class="navbar" id="navbar">
+      <button class="nav-btn" id="logout" type="button">Έξοδος</button>
+      <span class="nav-title" aria-hidden="true">Θέση ΦΠΑ</span>
+      <button class="nav-btn icon" id="refresh" type="button" aria-label="Ανανέωση">
+        <svg class="icon-refresh" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+          <path d="M19.8 4.2v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="spinner small" aria-hidden="true"></span>
+      </button>
+    </header>
+
+    <div class="ptr" id="ptr" aria-hidden="true"><span class="spinner"></span></div>
+
+    <main id="content">
+      <h1 class="large-title" id="large-title">Θέση ΦΠΑ</h1>
+
+      <label class="picker">
+        <span id="quarter-label"></span>
+        <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <select id="quarter" aria-label="Τρίμηνο"></select>
-        <button id="logout" class="link" type="button">Έξοδος</button>
-      </header>
+      </label>
 
-      <div class="card" id="result">
-        <span class="badge">Εκτίμηση</span>
-        <div class="kind" id="kind">—</div>
-        <div class="amount" id="amount">—</div>
+      <div class="group hero" id="result">
+        <span class="capsule">Εκτίμηση</span>
+        <div class="hero-kind" id="kind">—</div>
+        <div class="hero-amount" id="amount">—</div>
+        <div class="footnote secondary" id="formula">Εκροές − Εισροές − Πιστωτικό</div>
       </div>
 
-      <dl class="lines">
-        <div><dt>Φόρος εκροών</dt><dd id="out-vat">—</dd></div>
-        <div><dt>Φόρος εισροών</dt><dd id="in-vat">—</dd></div>
-        <div>
-          <dt>Πιστωτικό προηγ. περιόδου
-            <button id="edit-credit" class="link" type="button" aria-label="Αλλαγή πιστωτικού">✎</button>
-          </dt>
-          <dd id="credit">—</dd>
+      <div class="group">
+        <div class="row"><span class="row-label">Φόρος εκροών</span><span class="row-value" id="out-vat">—</span></div>
+        <div class="row"><span class="row-label">Φόρος εισροών</span><span class="row-value" id="in-vat">—</span></div>
+        <button class="row row-button" id="edit-credit" type="button">
+          <span class="row-label">Πιστωτικό υπόλοιπο</span>
+          <span class="row-value secondary" id="credit">—</span>
+          <svg class="chevron" viewBox="0 0 8 14" width="8" height="14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <p class="footnote secondary group-footer" id="last-update"></p>
+
+      <div class="group notices" id="notices" hidden>
+        <div class="row notice" id="unclassified" hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="var(--blue)"/><path d="M12 10.5v6" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="7.3" r="1.4" fill="#fff"/></svg>
+          <span id="unclassified-text"></span>
         </div>
-      </dl>
+        <div class="row notice" id="warning" hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M10.3 3.6a2 2 0 0 1 3.4 0l8.4 14.6a2 2 0 0 1-1.7 3H3.6a2 2 0 0 1-1.7-3z" fill="var(--orange-fill)"/><path d="M12 9v5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.4" r="1.3" fill="#fff"/></svg>
+          <span id="warning-text"></span>
+        </div>
+        <div class="row notice" id="sync-error" role="alert" hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="var(--red)"/><path d="M12 7v6.5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="16.8" r="1.4" fill="#fff"/></svg>
+          <span id="sync-error-text"></span>
+        </div>
+      </div>
+    </main>
+  </section>
 
-      <p class="meta" id="last-update"></p>
-      <p class="meta" id="unclassified" hidden></p>
-      <p class="meta warn" id="warning" hidden></p>
-      <p class="error" id="sync-error" hidden></p>
-
-      <button id="refresh" type="button">Ανανέωση</button>
-    </section>
-  </main>
+  <!-- Carried-forward credit sheet -->
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+    <div class="sheet-handle" id="sheet-handle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <button class="nav-btn" id="sheet-cancel" type="button">Άκυρο</button>
+        <h2 class="headline" id="sheet-title">Πιστωτικό</h2>
+        <button class="nav-btn strong" id="sheet-save" type="submit" form="credit-form">Αποθήκευση</button>
+      </div>
+    </div>
+    <form id="credit-form" class="sheet-body">
+      <div class="group">
+        <label class="row field">
+          <span class="row-label">Ποσό</span>
+          <input id="credit-input" inputmode="decimal" autocomplete="off" placeholder="0,00">
+          <span class="secondary">€</span>
+        </label>
+      </div>
+      <p class="footnote secondary group-footer" id="sheet-note"></p>
+      <p class="footnote error-text group-footer" id="sheet-error" role="alert" hidden></p>
+    </form>
+  </div>
 </body>
 </html>
