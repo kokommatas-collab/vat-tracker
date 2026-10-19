@@ -131,3 +131,25 @@ export function manualAsEntry(m) {
 
 const eur = new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" });
 export const formatEur = (x) => eur.format(Number(x || 0));
+
+/**
+ * Groups rows by month of `dateField`, newest month first, rows newest first.
+ * Returns [{ month: "YYYY-MM", items, total }] where total sums `amountField` (cents-exact).
+ */
+export function groupByMonth(rows, dateField, amountField) {
+  const map = new Map();
+  for (const r of rows) {
+    const m = monthOf(r[dateField]);
+    if (!map.has(m)) map.set(m, { month: m, items: [], total: 0 });
+    const g = map.get(m);
+    g.items.push(r);
+    g.total += cents(r[amountField]);
+  }
+  return [...map.values()]
+    .sort((a, b) => b.month.localeCompare(a.month))
+    .map((g) => ({
+      ...g,
+      total: g.total / 100,
+      items: g.items.sort((a, b) => b[dateField].localeCompare(a[dateField])),
+    }));
+}

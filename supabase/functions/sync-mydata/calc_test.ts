@@ -103,3 +103,17 @@ Deno.test("manual VAT entries are summed with myDATA documents", () => {
   assert.equal(t.in_vat, 40);
   assert.deepEqual(vatPosition({ outVat: t.out_vat, inVat: t.in_vat, unclassifiedVat: t.unclassified_vat }), { kind: "debit", amount: 65 });
 });
+
+Deno.test("groupByMonth: newest month first, sorted rows, cents-exact totals", async () => {
+  const { groupByMonth } = await import("../../../docs/calc.js");
+  const rows = [
+    { issue_date: "2026-10-11", unclassified_vat: 0.1 },
+    { issue_date: "2026-11-02", unclassified_vat: 52.08 },
+    { issue_date: "2026-10-30", unclassified_vat: 0.2 },
+  ];
+  const g = groupByMonth(rows, "issue_date", "unclassified_vat");
+  assert.deepEqual(g.map((x) => x.month), ["2026-11", "2026-10"]);
+  assert.equal(g[1].total, 0.3);
+  assert.deepEqual(g[1].items.map((r: { issue_date: string }) => r.issue_date), ["2026-10-30", "2026-10-11"]);
+  assert.deepEqual(groupByMonth([], "issue_date", "unclassified_vat"), []);
+});

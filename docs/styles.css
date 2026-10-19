@@ -141,9 +141,15 @@ button.qrow[aria-pressed="true"] .row-title::after {
 .field input[type="date"]::-webkit-date-and-time-value { text-align: left; }
 .field:focus-within .field-label { color: var(--blue); }
 
+/* Month header inside a list (unclassified expenses) */
+.rows > .row.month-head { background: var(--fill); min-height: 34px; padding-top: 7px; padding-bottom: 7px; }
+.month-head .row-title { font-size: 0.8125rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--secondary); }
+.month-head .row-amt { font-size: 0.8125rem; color: var(--secondary); }
+.row.month-head + .row::before, .row + .row.month-head::before { display: none; }
+
 /* Segmented control */
 .seg-ctl {
-  flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-auto-flow: column; grid-auto-columns: 1fr;
   background: var(--fill); border-radius: 9px; padding: 2px;
 }
 .seg-ctl label { position: relative; display: block; font-size: 0.8125rem; font-weight: 500; }

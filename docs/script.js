@@ -2,11 +2,11 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 import {
   aggregate, athensToday, currentQuarter, daysUntil, deadlineOf, formatEur, manualAsEntry, monthLabel,
-  previousQuarterOf, quarterLabel, quarterMonths, quarterOf, quarterRange, quarterShort, vatPosition,
-} from "./calc.js?v=5";
-import { prefersReducedMotion } from "./motion.js?v=5";
-import { createSheet } from "./sheet.js?v=5";
-import { pullToRefresh } from "./ptr.js?v=5";
+  groupByMonth, monthOf, previousQuarterOf, quarterLabel, quarterMonths, quarterOf, quarterRange, quarterShort, vatPosition,
+} from "./calc.js?v=6";
+import { prefersReducedMotion } from "./motion.js?v=6";
+import { createSheet } from "./sheet.js?v=6";
+import { pullToRefresh } from "./ptr.js?v=6";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -204,43 +204,79 @@ function supplierLabel(doc) {
   return supplierNames.get(doc.issuer_vat) || doc.issuer_name || (doc.issuer_vat ? `ΑΦΜ ${doc.issuer_vat}` : "Άγνωστος εκδότης");
 }
 
+const MONTH_SHORT = ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μάι", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"];
+let uncMonth = "all"; // "all" or "YYYY-MM" within the selected quarter
+
 function unclassifiedOfQuarter() {
   return entries
     .filter((e) => !e.is_cancelled && Number(e.unclassified_vat) !== 0 && quarterOf(e.issue_date) === selected)
     .sort((a, b) => b.issue_date.localeCompare(a.issue_date));
 }
 
+/** Unclassified expenses of the quarter, filtered by the month picker. */
+function unclassifiedShown() {
+  return unclassifiedOfQuarter().filter((e) => uncMonth === "all" || monthOf(e.issue_date) === uncMonth);
+}
+
+function renderUncFilter() {
+  const months = quarterMonths(selected);
+  if (!months.includes(uncMonth)) uncMonth = "all";
+  const opts = [["all", "Όλοι"], ...months.map((m) => [m, MONTH_SHORT[Number(m.slice(5)) - 1]])];
+  $("unc-filter").replaceChildren(...opts.map(([value, text]) => {
+    const label = el("label");
+    const input = el("input");
+    Object.assign(input, { type: "radio", name: "unc-month", value, checked: value === uncMonth });
+    input.addEventListener("change", () => { uncMonth = value; renderUnclassified(); });
+    label.append(input, el("span", "", text));
+    return label;
+  }));
+}
+
 function renderUnclassified() {
   const box = $("unclassified-list");
-  const items = unclassifiedOfQuarter();
+  const all = unclassifiedOfQuarter();
+  $("unc-filter-row").hidden = all.length === 0;
+  renderUncFilter();
+  const items = unclassifiedShown();
   $("copy-unclassified").hidden = items.length === 0;
   if (items.length === 0) {
-    box.replaceChildren(el("p", "empty-note", "Όλα τα έξοδα του τριμήνου είναι χαρακτηρισμένα."));
+    box.replaceChildren(el("p", "empty-note", all.length === 0
+      ? "Όλα τα έξοδα του τριμήνου είναι χαρακτηρισμένα."
+      : "Κανένα μη χαρακτηρισμένο έξοδο αυτόν τον μήνα."));
     return;
   }
-  box.replaceChildren(...items.map((e) => {
-    const doc = docsByMark.get(e.mark);
-    const d = el("div", "row");
-    const left = el("div");
-    const number = doc && (doc.series || doc.aa) ? `${[doc.series, doc.aa].filter(Boolean).join(" ")}, ` : "";
-    left.append(
-      el("div", "row-title", supplierLabel(doc)),
-      el("div", "row-sub", `${number}${fmtDate(e.issue_date)}, ΜΑΡΚ ${e.mark}`),
+  box.replaceChildren(...groupByMonth(items, "issue_date", "unclassified_vat").flatMap((g) => {
+    const head = el("div", "row month-head");
+    head.append(
+      el("div", "row-title", monthLabel(g.month)),
+      el("div", "row-amt", `${g.items.length} · ${formatEur(g.total)}`),
     );
-    const right = el("div");
-    right.append(el("div", "row-amt neutral", formatEur(e.unclassified_vat)));
-    right.append(el("div", "row-kind muted", doc?.gross ? `σύνολο ${formatEur(doc.gross)}` : "ΦΠΑ"));
-    if (doc?.issuer_vat) {
-      const acts = el("div", "row-actions");
-      const b = el("button", "link", supplierNames.has(doc.issuer_vat) ? "Μετονομασία" : "Όνομα");
-      b.type = "button";
-      b.addEventListener("click", () => nameSupplier(doc.issuer_vat));
-      acts.append(b);
-      right.append(acts);
-    }
-    d.append(left, right);
-    return d;
+    return [head, ...g.items.map(unclassifiedRow)];
   }));
+}
+
+function unclassifiedRow(e) {
+  const doc = docsByMark.get(e.mark);
+  const d = el("div", "row");
+  const left = el("div");
+  const number = doc && (doc.series || doc.aa) ? `${[doc.series, doc.aa].filter(Boolean).join(" ")}, ` : "";
+  left.append(
+    el("div", "row-title", supplierLabel(doc)),
+    el("div", "row-sub", `${number}${fmtDate(e.issue_date)}, ΜΑΡΚ ${e.mark}`),
+  );
+  const right = el("div");
+  right.append(el("div", "row-amt neutral", formatEur(e.unclassified_vat)));
+  right.append(el("div", "row-kind muted", doc?.gross ? `σύνολο ${formatEur(doc.gross)}` : "ΦΠΑ"));
+  if (doc?.issuer_vat) {
+    const acts = el("div", "row-actions");
+    const b = el("button", "link", supplierNames.has(doc.issuer_vat) ? "Μετονομασία" : "Όνομα");
+    b.type = "button";
+    b.addEventListener("click", () => nameSupplier(doc.issuer_vat));
+    acts.append(b);
+    right.append(acts);
+  }
+  d.append(left, right);
+  return d;
 }
 
 function nameSupplier(vat) {
@@ -260,13 +296,17 @@ function nameSupplier(vat) {
 }
 
 $("copy-unclassified").addEventListener("click", async () => {
-  const lines = unclassifiedOfQuarter().map((e) => {
+  const line = (e) => {
     const doc = docsByMark.get(e.mark);
     const number = doc ? [doc.series, doc.aa].filter(Boolean).join(" ") : "";
     const vat = doc?.issuer_vat ? ` (ΑΦΜ ${doc.issuer_vat})` : "";
     return `${fmtDate(e.issue_date)}  ${supplierLabel(doc)}${vat}  ${number}  ΜΑΡΚ ${e.mark}  ΦΠΑ ${formatEur(e.unclassified_vat)}`;
-  });
-  const text = `Μη χαρακτηρισμένα έξοδα, ${quarterShort(selected)}\n\n${lines.join("\n")}`;
+  };
+  const groups = groupByMonth(unclassifiedShown(), "issue_date", "unclassified_vat");
+  const body = groups.map((g) =>
+    `${monthLabel(g.month)} (${g.items.length}, ΦΠΑ ${formatEur(g.total)})\n${g.items.map(line).join("\n")}`).join("\n\n");
+  const period = uncMonth === "all" ? quarterShort(selected) : monthLabel(uncMonth);
+  const text = `Μη χαρακτηρισμένα έξοδα, ${period}\n\n${body}`;
   try {
     await navigator.clipboard.writeText(text);
     $("copy-unclassified").textContent = "Αντιγράφηκε";
@@ -325,8 +365,9 @@ function renderMonths() {
     const inAll = t.in_vat + t.unclassified_vat;
     const { kind, amount } = vatPosition({ outVat: t.out_vat, inVat: t.in_vat, unclassifiedVat: t.unclassified_vat });
     const d = el("div", `row ${kind}`);
+    const unc = Number(t.unclassified_vat) ? `, μη χαρακτ. ${formatEur(t.unclassified_vat)}` : "";
     d.append(...row(kind, monthLabel(m),
-      `Έσοδα ${formatEur(t.out_vat)}, έξοδα ${formatEur(inAll)}, ${t.docs} παραστατικά`, amount));
+      `Έσοδα ${formatEur(t.out_vat)}, έξοδα ${formatEur(inAll)}${unc}, ${t.docs} παραστατικά`, amount));
     return d;
   }));
 }
